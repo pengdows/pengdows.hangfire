@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <TestSessionTimeout>300000</TestSessionTimeout>
+  </RunConfiguration>
+
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <!-- Include ONLY the main pengdows.hangfire assembly -->
+          <Include>[pengdows.hangfire]*</Include>
+
+          <!-- Exclude all test and ancillary assemblies -->
+          <Exclude>[pengdows.hangfire.tests]*;[pengdows.hangfire.integration.tests]*;[pengdows.hangfire.stress.tests]*;[pengdows.hangfire.stress.tests.worker]*;[*.Tests]*;[*Test*]*;[*Mock*]*</Exclude>
+
+          <!-- Exclude generated code and common non-testable patterns -->
+          <ExcludeByFile>**/obj/**;**/bin/**;**/*.Designer.cs;**/*.g.cs;**/*.g.i.cs</ExcludeByFile>
+
+          <!-- Exclude code marked with attributes -->
+          <ExcludeByAttribute>ExcludeFromCodeCoverageAttribute;GeneratedCodeAttribute;CompilerGeneratedAttribute</ExcludeByAttribute>
+
+          <!-- Additional Coverlet-specific settings -->
+          <Format>cobertura</Format>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

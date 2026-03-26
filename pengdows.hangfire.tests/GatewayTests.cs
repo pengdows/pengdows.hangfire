@@ -1,0 +1,889 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using pengdows.hangfire.gateways;
+using pengdows.crud;
+using pengdows.crud.enums;
+using pengdows.crud.fakeDb;
+using Xunit;
+
+namespace pengdows.hangfire.tests;
+
+/// <summary>
+/// Unit tests for all gateway classes verifying SQL generation patterns and
+/// basic return-value behaviour using the fakeDb in-memory provider.
+/// </summary>
+public sealed class GatewayTests
+{
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static (DatabaseContext Context, fakeDbFactory Factory) MakeContext(
+        SupportedDatabase db = SupportedDatabase.SqlServer)
+    {
+        var factory = new fakeDbFactory(db);
+        return (new DatabaseContext("Data Source=fake", factory), factory);
+    }
+
+    /// <summary>
+    /// Pre-seeds a single-row reader with {Value=scalar} for ExecuteScalarRequiredAsync.
+    /// The context is created FIRST (so any initialization connection is consumed), then
+    /// the reader result is enqueued for the gateway's subsequent CreateSqlContainer call.
+    /// </summary>
+    private static (DatabaseContext Context, fakeDbFactory Factory) MakeContextWithScalar(
+        long scalar = 0L, SupportedDatabase db = SupportedDatabase.SqlServer)
+    {
+        var factory = new fakeDbFactory(db);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        // Enqueue AFTER context init so the gateway's CreateSqlContainer picks it up
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Value"] = scalar } });
+        return (ctx, factory);
+    }
+
+    private static bool NonQueryContains(fakeDbFactory f, string s) =>
+        f.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts)
+         .Any(t => t.Contains(s, StringComparison.OrdinalIgnoreCase));
+
+    private static bool ReaderContains(fakeDbFactory f, string s) =>
+        f.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts)
+         .Any(t => t.Contains(s, StringComparison.OrdinalIgnoreCase));
+
+    private static bool SqlContains(fakeDbFactory f, string s) =>
+        NonQueryContains(f, s) || ReaderContains(f, s);
+
+    private static object? ParamValue(fakeDbFactory f, string name) =>
+        f.CreatedConnections.SelectMany(c => c.CreatedCommands)
+         .SelectMany(cmd => cmd.Parameters.Cast<fakeDbParameter>())
+         .FirstOrDefault(p => p.ParameterName.Contains(name, StringComparison.OrdinalIgnoreCase))?
+         .Value;
+
+    private static readonly Dictionary<string, object?> ScalarRow =
+        new() { ["Value"] = 0L };
+
+    // ── HashGateway ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Hash_GetAllEntriesAsync_ReturnsEmptyDictWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetAllEntriesAsync("k");
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetAllEntriesAsync_SqlContainsKeyColumn()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).GetAllEntriesAsync("mykey");
+            Assert.True(ReaderContains(factory, "Key"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetValueAsync_ReturnsNullWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetValueAsync("k", "f");
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetValueAsync_SqlContainsFieldColumn()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).GetValueAsync("k", "f");
+            Assert.True(ReaderContains(factory, "Field"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetCountAsync_ReturnsZeroWhenNoRows()
+    {
+        var (ctx, _) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetCountAsync("k");
+            Assert.Equal(0L, result);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetCountAsync_SqlContainsCount()
+    {
+        var (ctx, factory) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            await new HashGateway(ctx).GetCountAsync("k");
+            Assert.True(ReaderContains(factory, "COUNT"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetTtlAsync_ReturnsNegativeOneWhenNoExpiry()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            Assert.Equal(TimeSpan.FromSeconds(-1), result);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetTtlAsync_SqlContainsMinExpireAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).GetTtlAsync("k");
+            Assert.True(ReaderContains(factory, "ExpireAt"));
+            Assert.True(ReaderContains(factory, "MIN"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_DeleteAllForKeyAsync_IssuesDeleteStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).DeleteAllForKeyAsync("k");
+            Assert.True(NonQueryContains(factory, "DELETE"));
+            Assert.True(NonQueryContains(factory, "Key"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_UpdateExpireAtAsync_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "ExpireAt"));
+        }
+    }
+
+    [Fact]
+    public async Task Hash_UpdateExpireAtAsync_Null_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new HashGateway(ctx).UpdateExpireAtAsync("k", null);
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+        }
+    }
+
+    // ── ListGateway ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task List_AppendAsync_IssuesInsertStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ListGateway(ctx).AppendAsync("k", "v");
+            Assert.True(SqlContains(factory, "INSERT"));
+            Assert.True(SqlContains(factory, "Value"));
+        }
+    }
+
+    [Fact]
+    public async Task List_DeleteByKeyValueAsync_IssuesDeleteStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ListGateway(ctx).DeleteByKeyValueAsync("k", "v");
+            Assert.True(SqlContains(factory, "DELETE"));
+            Assert.True(SqlContains(factory, "Value"));
+        }
+    }
+
+    [Fact]
+    public async Task List_TrimAsync_IssuesDeleteWithNotIn()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ListGateway(ctx).TrimAsync("k", 0, 5);
+            Assert.True(NonQueryContains(factory, "DELETE"));
+            Assert.True(NonQueryContains(factory, "NOT IN"));
+        }
+    }
+
+    [Fact]
+    public async Task List_GetCountAsync_ReturnsZeroWhenNoRows()
+    {
+        var (ctx, _) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetCountAsync("k");
+            Assert.Equal(0L, result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetCountAsync_SqlContainsCount()
+    {
+        var (ctx, factory) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            await new ListGateway(ctx).GetCountAsync("k");
+            Assert.True(ReaderContains(factory, "COUNT"));
+        }
+    }
+
+    [Fact]
+    public async Task List_GetTtlAsync_ReturnsNegativeOneWhenNoExpiry()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            Assert.Equal(TimeSpan.FromSeconds(-1), result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetRangeAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetAllAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetAllAsync("k");
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetAllAsync_SqlContainsKeyCondition()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ListGateway(ctx).GetAllAsync("mylistkey");
+            Assert.True(ReaderContains(factory, "Key"));
+        }
+    }
+
+    [Fact]
+    public async Task List_UpdateExpireAtAsync_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ListGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "ExpireAt"));
+        }
+    }
+
+    // ── SetGateway ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Set_GetAllItemsAsync_ReturnsEmptySetWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetAllItemsAsync("k");
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetFirstByLowestScoreAsync_Single_ReturnsNullWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1);
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetFirstByLowestScoreAsync_Multi_SqlContainsScore()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1, 3);
+            Assert.True(ReaderContains(factory, "Score"));
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetFirstByLowestScoreAsync_Multi_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1, 3);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetCountAsync_ReturnsZeroWhenNoRows()
+    {
+        var (ctx, _) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetCountAsync("k");
+            Assert.Equal(0L, result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_ContainsAsync_ReturnsFalseWhenCountIsZero()
+    {
+        var (ctx, _) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).ContainsAsync("k", "v");
+            Assert.False(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_ContainsAsync_ReturnsTrueWhenCountIsNonZero()
+    {
+        var (ctx, _) = MakeContextWithScalar(1L);
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).ContainsAsync("k", "v");
+            Assert.True(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_ContainsAsync_SqlContainsValueCondition()
+    {
+        var (ctx, factory) = MakeContextWithScalar(0L);
+        await using (ctx)
+        {
+            await new SetGateway(ctx).ContainsAsync("k", "v");
+            Assert.True(ReaderContains(factory, "Value"));
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetRangeAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetRangeAsync("k", 0, 4);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetRangeAsync_SqlContainsScoreOrder()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new SetGateway(ctx).GetRangeAsync("k", 0, 4);
+            Assert.True(ReaderContains(factory, "Score"));
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetTtlAsync_ReturnsNegativeOneWhenNoExpiry()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            Assert.Equal(TimeSpan.FromSeconds(-1), result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_UpdateExpireAtAsync_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new SetGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "ExpireAt"));
+        }
+    }
+
+    [Fact]
+    public async Task Set_DeleteByKeyAsync_IssuesDeleteStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new SetGateway(ctx).DeleteByKeyAsync("k");
+            Assert.True(NonQueryContains(factory, "DELETE"));
+            Assert.True(NonQueryContains(factory, "Key"));
+        }
+    }
+
+    // ── JobGateway ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Job_UpdateExpireAtAsync_IssuesUpdateWithExpireAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobGateway(ctx).UpdateExpireAtAsync(1L, DateTime.UtcNow.AddHours(1));
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "ExpireAt"));
+        }
+    }
+
+    [Fact]
+    public async Task Job_UpdateExpireAtAsync_NullExpiry_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobGateway(ctx).UpdateExpireAtAsync(1L, null);
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+        }
+    }
+
+    [Fact]
+    public async Task Job_UpdateStateNameAsync_IssuesUpdateWithStateName()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobGateway(ctx).UpdateStateNameAsync(1L, "Succeeded");
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "StateName"));
+        }
+    }
+
+    [Fact]
+    public async Task Job_UpdateStateAsync_IssuesBothStateIdAndStateName()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobGateway(ctx).UpdateStateAsync(1L, 99L, "Succeeded");
+            Assert.True(NonQueryContains(factory, "StateId"));
+            Assert.True(NonQueryContains(factory, "StateName"));
+        }
+    }
+
+    [Fact]
+    public async Task Job_GetPagedByStateAsync_SqlContainsStateName()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobGateway(ctx).GetPagedByStateAsync("Succeeded", 0, 10);
+            Assert.True(ReaderContains(factory, "StateName"));
+        }
+    }
+
+    [Fact]
+    public async Task Job_GetPagedByStateAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobGateway(ctx).GetPagedByStateAsync("Succeeded", 0, 10);
+            Assert.Empty(result);
+        }
+    }
+
+    // ── JobParameterGateway ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task JobParameter_GetAllForJobAsync_ReturnsEmptyDictWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobParameterGateway(ctx).GetAllForJobAsync(1L);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobParameter_GetAllForJobAsync_SqlContainsJobId()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobParameterGateway(ctx).GetAllForJobAsync(1L);
+            Assert.True(ReaderContains(factory, "JobId"));
+        }
+    }
+
+    // ── JobStateGateway ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task JobState_GetLatestAsync_ReturnsNullWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobStateGateway(ctx).GetLatestAsync(1L);
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobState_GetLatestAsync_SqlContainsJobIdAndOrderDesc()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobStateGateway(ctx).GetLatestAsync(1L);
+            Assert.True(ReaderContains(factory, "JobId"));
+            Assert.True(ReaderContains(factory, "DESC"));
+        }
+    }
+
+    [Fact]
+    public async Task JobState_GetAllForJobAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobStateGateway(ctx).GetAllForJobAsync(1L);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobState_GetAllForJobAsync_SqlContainsJobId()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobStateGateway(ctx).GetAllForJobAsync(1L);
+            Assert.True(ReaderContains(factory, "JobId"));
+        }
+    }
+
+    // ── JobQueueGateway ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task JobQueue_AcknowledgeAsync_IssuesDeleteWithFetchedAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).AcknowledgeAsync(42L, "default");
+            Assert.True(NonQueryContains(factory, "DELETE"));
+            Assert.True(NonQueryContains(factory, "FetchedAt"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueAsync_SetsNullFetchedAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueAsync(42L, "default");
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "NULL"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_GetDistinctQueuesAsync_SqlContainsDistinct()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).GetDistinctQueuesAsync();
+            Assert.True(ReaderContains(factory, "DISTINCT"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_GetDistinctQueuesAsync_ReturnsEmptyWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).GetDistinctQueuesAsync();
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_GetPagedByQueueAsync_SqlContainsFetchedAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).GetPagedByQueueAsync("default", 0, 10, false);
+            Assert.True(ReaderContains(factory, "FetchedAt"));
+            Assert.True(ReaderContains(factory, "Queue"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_EmptyQueue_ReturnsNull()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_CancelledToken_Throws()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => new JobQueueGateway(ctx).FetchNextJobAsync(new[] { "default" }, cts.Token));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_SuccessfulClaim_ReturnsJobIdAndQueue()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        // Seed AFTER context init so the transaction's CreateSqlContainer picks up this connection
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L, ["Queue"] = "default" }
+        });
+        await using (ctx)
+        {
+            var gw = new JobQueueGateway(ctx);
+            var result = await gw.FetchNextJobAsync(new[] { "default" }, CancellationToken.None);
+            Assert.NotNull(result);
+            Assert.Equal(42L, result!.Value.JobId);
+            Assert.Equal("default", result.Value.Queue);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_RaceLost_ReturnsNull()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        // Seed AFTER context init; also enqueue 0 to simulate losing the optimistic UPDATE race
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L, ["Queue"] = "default" }
+        });
+        factory.Connections[0].NonQueryResults.Enqueue(0);
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+            Assert.Null(result);
+        }
+    }
+
+    // ── CounterGateway ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Counter_AppendAsync_WithoutExpiry_SqlValueIsNull()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AppendAsync("k", 1);
+            Assert.True(SqlContains(factory, "INSERT"));
+            Assert.True(SqlContains(factory, "ExpireAt"));
+            var val = ParamValue(factory, "ExpireAt");
+            Assert.True(val == null || val == DBNull.Value);
+        }
+    }
+
+    [Fact]
+    public async Task Counter_AppendAsync_WithExpiry_SqlIncludesExpireAt()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AppendAsync("k", 1, DateTime.UtcNow.AddHours(1));
+            Assert.True(SqlContains(factory, "INSERT"));
+            Assert.True(SqlContains(factory, "ExpireAt"));
+        }
+    }
+
+    [Fact]
+    public async Task Counter_AggregateAsync_ReturnsZeroWhenNoRows()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.Equal(0, result);
+        }
+    }
+
+    [Fact]
+    public async Task Counter_AggregateAsync_SqlContainsOrderByAndPaging()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.True(ReaderContains(factory, "Id"));
+        }
+    }
+
+    // ── AggregatedCounterGateway ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task AggregatedCounter_GetTimelineAsync_EmptyKeys_ReturnsEmptyDict()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new AggregatedCounterGateway(ctx).GetTimelineAsync(Array.Empty<string>());
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task AggregatedCounter_GetTimelineAsync_WithKeys_SqlContainsIn()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new AggregatedCounterGateway(ctx).GetTimelineAsync(new[] { "k1", "k2" });
+            Assert.True(ReaderContains(factory, "IN"));
+            Assert.True(ReaderContains(factory, "Key"));
+        }
+    }
+
+    [Fact]
+    public async Task AggregatedCounter_GetValueAsync_ReturnsZeroWhenNoRow()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new AggregatedCounterGateway(ctx).GetValueAsync("k");
+            Assert.Equal(0L, result);
+        }
+    }
+
+    [Fact]
+    public async Task AggregatedCounter_GetValueAsync_SqlContainsKeyCondition()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new AggregatedCounterGateway(ctx).GetValueAsync("k");
+            Assert.True(ReaderContains(factory, "Value"));
+        }
+    }
+
+    // ── MySQL / MariaDB / TiDB dialect-specific tests ─────────────────────────
+
+    // Regression: the else-branch in CounterGateway.AggregateAsync used
+    // "ON CONFLICT ... DO UPDATE SET" (PostgreSQL syntax).  MySQL/MariaDB/TiDB
+    // do not support ON CONFLICT and require "ON DUPLICATE KEY UPDATE" instead.
+    [Theory]
+    [InlineData(SupportedDatabase.MySql)]
+    [InlineData(SupportedDatabase.MariaDb)]
+    [InlineData(SupportedDatabase.TiDb)]
+    public async Task Counter_AggregateAsync_MySqlFamily_UsesOnDuplicateKeyUpdate(SupportedDatabase db)
+    {
+        var factory = new fakeDbFactory(db);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["Key"] = "stats:success", ["Value"] = 3 }
+        });
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.True(NonQueryContains(factory, "ON DUPLICATE KEY UPDATE"),
+                $"{db}: expected ON DUPLICATE KEY UPDATE in upsert SQL");
+            Assert.False(NonQueryContains(factory, "ON CONFLICT"),
+                $"{db}: ON CONFLICT must not appear for MySQL-family databases");
+        }
+    }
+
+    // Regression: the else-branch in CounterGateway.AggregateAsync used
+    // "ON CONFLICT ... DO UPDATE SET" (PostgreSQL syntax).  Firebird uses MERGE
+    // with FROM RDB$DATABASE (not ON CONFLICT, not ON DUPLICATE KEY UPDATE).
+    [Fact]
+    public async Task Counter_AggregateAsync_Firebird_UsesMergeWithRdbDatabase()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Firebird);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["Key"] = "stats:success", ["Value"] = 3 }
+        });
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.True(NonQueryContains(factory, "MERGE"),
+                "Firebird: expected MERGE in upsert SQL");
+            Assert.True(NonQueryContains(factory, "RDB$DATABASE"),
+                "Firebird: expected RDB$DATABASE in MERGE USING clause");
+            Assert.True(NonQueryContains(factory, "CAST"),
+                "Firebird: CAST required in USING SELECT for type inference");
+            Assert.False(NonQueryContains(factory, "ON CONFLICT"),
+                "Firebird: ON CONFLICT must not appear");
+        }
+    }
+
+    // Regression: ListGateway.TrimAsync generates
+    //   DELETE ... WHERE Id NOT IN (SELECT Id ... LIMIT N)
+    // MySQL rejects LIMIT inside an IN subquery unless wrapped in a derived table.
+    // The fix wraps it:  NOT IN (SELECT Id FROM (SELECT Id ... LIMIT N) AS _t)
+    [Theory]
+    [InlineData(SupportedDatabase.MySql)]
+    [InlineData(SupportedDatabase.MariaDb)]
+    [InlineData(SupportedDatabase.TiDb)]
+    public async Task List_TrimAsync_MySqlFamily_WrapsSubqueryToAllowLimit(SupportedDatabase db)
+    {
+        var factory = new fakeDbFactory(db);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        await using (ctx)
+        {
+            await new ListGateway(ctx).TrimAsync("k", 0, 5);
+            // The wrapping derived-table alias must be present; its exact name is an impl detail.
+            Assert.True(NonQueryContains(factory, "SELECT") && NonQueryContains(factory, "FROM ("),
+                $"{db}: LIMIT-in-IN subquery must be wrapped in a derived table for MySQL");
+        }
+    }
+}

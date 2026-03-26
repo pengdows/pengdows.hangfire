@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd"
+    objectQuotingStrategy="QUOTE_ALL_OBJECTS">
+
+    <!-- Create Schema (for databases that support it) -->
+    <changeSet id="0" author="pengdows">
+        <preConditions onFail="CONTINUE">
+            <not>
+                <dbms type="sqlite"/>
+            </not>
+            <not>
+                <dbms type="mysql"/>
+            </not>
+            <not>
+                <dbms type="mariadb"/>
+            </not>
+        </preConditions>
+        <sql dbms="postgresql, mssql, oracle">
+            CREATE SCHEMA IF NOT EXISTS "HangFire";
+        </sql>
+    </changeSet>
+
+    <!-- Schema Version Table -->
+    <changeSet id="1" author="pengdows">
+        <createTable tableName="Schema" schemaName="HangFire">
+            <column name="Version" type="int">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_Schema"/>
+            </column>
+        </createTable>
+        <insert tableName="Schema" schemaName="HangFire">
+            <column name="Version" valueNumeric="10"/>
+        </insert>
+    </changeSet>
+
+    <!-- Job Table -->
+    <changeSet id="2" author="pengdows">
+        <createTable tableName="Job" schemaName="HangFire">
+            <column name="Id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_Job"/>
+            </column>
+            <column name="StateId" type="bigint"/>
+            <column name="StateName" type="nvarchar(20)"/>
+            <column name="InvocationData" type="clob">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Arguments" type="clob">
+                <constraints nullable="false"/>
+            </column>
+            <column name="CreatedAt" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_Job_StateName" tableName="Job" schemaName="HangFire">
+            <column name="StateName"/>
+        </createIndex>
+        <createIndex indexName="IX_HangFire_Job_ExpireAt" tableName="Job" schemaName="HangFire">
+            <column name="ExpireAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- State Table -->
+    <changeSet id="3" author="pengdows">
+        <createTable tableName="State" schemaName="HangFire">
+            <column name="Id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_State"/>
+            </column>
+            <column name="JobId" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Name" type="nvarchar(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Reason" type="nvarchar(100)"/>
+            <column name="CreatedAt" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Data" type="clob"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_State_JobId" tableName="State" schemaName="HangFire">
+            <column name="JobId"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- JobParameter Table -->
+    <changeSet id="4" author="pengdows">
+        <createTable tableName="JobParameter" schemaName="HangFire">
+            <column name="JobId" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Name" type="nvarchar(40)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Value" type="clob"/>
+        </createTable>
+        <addPrimaryKey tableName="JobParameter" schemaName="HangFire" columnNames="JobId, Name" constraintName="PK_HangFire_JobParameter"/>
+    </changeSet>
+
+    <!-- Foreign Keys -->
+    <changeSet id="13" author="pengdows">
+        <addForeignKeyConstraint baseTableName="State" baseTableSchemaName="HangFire" baseColumnNames="JobId" 
+                                 referencedTableName="Job" referencedTableSchemaName="HangFire" referencedColumnNames="Id" 
+                                 constraintName="FK_HangFire_State_Job" onDelete="CASCADE"/>
+        <addForeignKeyConstraint baseTableName="JobParameter" baseTableSchemaName="HangFire" baseColumnNames="JobId" 
+                                 referencedTableName="Job" referencedTableSchemaName="HangFire" referencedColumnNames="Id" 
+                                 constraintName="FK_HangFire_JobParameter_Job" onDelete="CASCADE"/>
+    </changeSet>
+
+    <!-- JobQueue Table -->
+    <changeSet id="5" author="pengdows">
+        <createTable tableName="JobQueue" schemaName="HangFire">
+            <column name="Id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_JobQueue"/>
+            </column>
+            <column name="JobId" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Queue" type="nvarchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="FetchedAt" type="timestamp with time zone"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_JobQueue_QueueAndFetchedAt" tableName="JobQueue" schemaName="HangFire">
+            <column name="Queue"/>
+            <column name="FetchedAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Server Table -->
+    <changeSet id="6" author="pengdows">
+        <createTable tableName="Server" schemaName="HangFire">
+            <column name="Id" type="nvarchar(200)">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_Server"/>
+            </column>
+            <column name="Data" type="clob"/>
+            <column name="LastHeartbeat" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- Hash Table -->
+    <changeSet id="7" author="pengdows">
+        <createTable tableName="Hash" schemaName="HangFire">
+            <column name="Key" type="nvarchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Field" type="nvarchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Value" type="clob"/>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <addPrimaryKey tableName="Hash" schemaName="HangFire" columnNames="Key, Field" constraintName="PK_HangFire_Hash"/>
+        <createIndex indexName="IX_HangFire_Hash_ExpireAt" tableName="Hash" schemaName="HangFire">
+            <column name="ExpireAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- List Table -->
+    <changeSet id="8" author="pengdows">
+        <createTable tableName="List" schemaName="HangFire">
+            <column name="Id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_List"/>
+            </column>
+            <column name="Key" type="nvarchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Value" type="clob"/>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_List_ExpireAt" tableName="List" schemaName="HangFire">
+            <column name="ExpireAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Set Table -->
+    <changeSet id="9" author="pengdows">
+        <createTable tableName="Set" schemaName="HangFire">
+            <column name="Key" type="nvarchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Value" type="nvarchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Score" type="double">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <addPrimaryKey tableName="Set" schemaName="HangFire" columnNames="Key, Value" constraintName="PK_HangFire_Set"/>
+        <createIndex indexName="IX_HangFire_Set_Score" tableName="Set" schemaName="HangFire">
+            <column name="Key"/>
+            <column name="Score"/>
+        </createIndex>
+        <createIndex indexName="IX_HangFire_Set_ExpireAt" tableName="Set" schemaName="HangFire">
+            <column name="ExpireAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Counter Table -->
+    <changeSet id="10" author="pengdows">
+        <createTable tableName="Counter" schemaName="HangFire">
+            <column name="Id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_Counter"/>
+            </column>
+            <column name="Key" type="nvarchar(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="Value" type="int">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_Counter_Key" tableName="Counter" schemaName="HangFire">
+            <column name="Key"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- AggregatedCounter Table -->
+    <changeSet id="11" author="pengdows">
+        <createTable tableName="AggregatedCounter" schemaName="HangFire">
+            <column name="Key" type="nvarchar(100)">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_CounterAggregated"/>
+            </column>
+            <column name="Value" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ExpireAt" type="timestamp with time zone"/>
+        </createTable>
+        <createIndex indexName="IX_HangFire_AggregatedCounter_ExpireAt" tableName="AggregatedCounter" schemaName="HangFire">
+            <column name="ExpireAt"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Distributed Lock Table -->
+    <changeSet id="12" author="pengdows">
+        <createTable tableName="hf_lock" schemaName="HangFire">
+            <column name="resource" type="nvarchar(100)">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="PK_HangFire_hf_lock"/>
+            </column>
+            <column name="owner_id" type="nvarchar(40)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="int" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

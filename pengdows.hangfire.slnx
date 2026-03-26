@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="pengdows.hangfire/pengdows.hangfire.csproj" />
+  <Project Path="pengdows.hangfire.tests/pengdows.hangfire.tests.csproj" />
+  <Project Path="pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj" />
+  <Project Path="pengdows.hangfire.stress.tests/pengdows.hangfire.stress.tests.csproj" />
+  <Project Path="pengdows.hangfire.stress.tests.worker/pengdows.hangfire.stress.tests.worker.csproj" />
+</Solution>

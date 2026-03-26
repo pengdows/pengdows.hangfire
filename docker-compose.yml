@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: hangfire
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pengdows_test
+    ports:
+      - "5432:5432"
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Password123!"
+    ports:
+      - "1433:1433"
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: hangfire
+      MYSQL_USER: hangfire
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MARIADB_ROOT_PASSWORD: password
+      MARIADB_DATABASE: hangfire
+      MARIADB_USER: hangfire
+      MARIADB_PASSWORD: password
+    ports:
+      - "3307:3306"
+
+  oracle:
+    image: gvenzl/oracle-free
+    environment:
+      ORACLE_PASSWORD: password
+    ports:
+      - "1521:1521"
+
+  cockroach:
+    image: cockroachdb/cockroach:latest
+    command: start-single-node --insecure
+    ports:
+      - "26257:26257"
+      - "8080:8080"
+
+  firebird:
+    image: jacobalberty/firebird:latest
+    environment:
+      FIREBIRD_PASSWORD: password
+    ports:
+      - "3050:3050"
+
+  yugabyte:
+    image: yugabytedb/yugabyte:latest
+    command: [ "bin/yugabyted" , "start" , "--daemon=false" ]
+    ports:
+      - "5433:5433"
+      - "7000:7000"
+      - "9000:9000"
+      - "9042:9042"
+
+  tidb:
+    image: pingcap/tidb:latest
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+
+  liquibase:
+    image: liquibase/liquibase:latest
+    volumes:
+      - ./pengdows.hangfire/Liquibase:/liquibase/changelog
+      - ./liquibase_drivers:/liquibase/lib
+    command: --version

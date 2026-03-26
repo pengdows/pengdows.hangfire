@@ -1,0 +1,32 @@
+# Build output
+**/bin/
+**/obj/
+
+# Test results and coverage
+TestResults/
+coverage-report/
+*.trx
+*.coverage
+*.coveragexml
+*.opencover.xml
+coverlet*.json
+
+# Local databases and logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# User and IDE-specific files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Local AI/tooling state
+.claude/settings.local.json
+.gemini/

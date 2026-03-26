@@ -1,0 +1,365 @@
+name: Build, Test & Publish NuGet Package
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # Needed for git push and release creation
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.coverage.outputs.coverage }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Detect coverage settings changes in PRs
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+
+          base_ref="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}"
+
+          exclusion_changes=$(git diff "$base_ref...HEAD" -- coverage.runsettings \
+            | { grep '^[+-]' || true; } | { grep -v '^---' || true; } | { grep -v '^+++' || true; } \
+            | { grep -iE '<(Include|Exclude|ExcludeByFile|ExcludeByAttribute)' || true; } \
+            | wc -l)
+          if [[ "$exclusion_changes" -gt 0 ]]; then
+            echo "❌ coverage.runsettings coverage exclusions changed. Exclusion changes require explicit maintainer review."
+            git diff "$base_ref...HEAD" -- coverage.runsettings
+            exit 1
+          fi
+
+          echo "✅ coverage.runsettings exclusions unchanged."
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Strip local NuGet source (CI always pulls from nuget.org)
+        run: dotnet nuget remove source local-crud-artifacts || true
+
+      - name: Restore dependencies
+        run: dotnet restore pengdows.hangfire.slnx
+
+      - name: Build solution
+        run: dotnet build pengdows.hangfire.slnx --no-restore --configuration Release
+
+      - name: Install coverage tools
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Clean previous coverage results
+        run: rm -rf ./TestResults
+
+      - name: Run unit tests and collect coverage
+        run: |
+          dotnet test pengdows.hangfire.tests/pengdows.hangfire.tests.csproj \
+            --no-build --configuration Release \
+            --blame-hang --blame-hang-timeout 120s \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults \
+            --settings coverage.runsettings
+
+      - name: Generate coverage report
+        run: |
+          reportgenerator \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"coverage-report" \
+            -reporttypes:"Html;Cobertura" \
+            -assemblyfilters:"+pengdows.hangfire;-*.tests;-*.Tests" \
+            -classfilters:"-*Test*;-*Mock*"
+
+      - name: Enforce coverage floor and ratchet
+        id: coverage
+        run: |
+          set -euo pipefail
+
+          xml_file="coverage-report/Cobertura.xml"
+          if [[ ! -f "${xml_file}" ]]; then
+            echo "❌ ${xml_file} not found"
+            exit 1
+          fi
+
+          rate=$(grep -m1 'line-rate="' "$xml_file" | sed -n 's/.*line-rate="\([^"]*\)".*/\1/p')
+          if [[ -z "${rate}" ]]; then
+            echo "❌ Could not parse line-rate from Cobertura XML"
+            exit 1
+          fi
+
+          coverage_percent=$(awk "BEGIN { printf \"%.2f\", ${rate} * 100 }")
+          echo "📊 pengdows.hangfire line coverage: $coverage_percent%"
+
+          minimum_floor=30
+          baseline_file=".github/coverage-baseline.txt"
+          if [[ ! -f "$baseline_file" ]]; then
+            echo "❌ Missing $baseline_file"
+            exit 1
+          fi
+
+          baseline=$(tr -d '[:space:]' < "$baseline_file")
+          if ! [[ "$baseline" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "❌ Invalid baseline value in $baseline_file: '$baseline'"
+            exit 1
+          fi
+
+          required="$minimum_floor"
+          baseline_higher=$(awk "BEGIN { print ($baseline > $required) ? 1 : 0 }")
+          if [[ "$baseline_higher" -eq 1 ]]; then
+            required="$baseline"
+          fi
+
+          echo "🧭 Minimum floor: ${minimum_floor}%"
+          echo "🧭 Baseline ratchet: ${baseline}%"
+          echo "🧭 Effective required coverage: ${required}%"
+
+          too_low=$(awk "BEGIN { print ($coverage_percent < $required) ? 1 : 0 }")
+          if [[ "$too_low" -eq 1 ]]; then
+            echo "❌ Coverage $coverage_percent% is below required $required%"
+            exit 1
+          else
+            echo "✅ Coverage $coverage_percent% meets threshold"
+          fi
+
+          echo "coverage=$coverage_percent" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce no TransactionScope usage
+        run: |
+          set -euo pipefail
+
+          if grep -rn --include='*.cs' -E 'new\s+TransactionScope|using\s+System\.Transactions' \
+            pengdows.hangfire \
+            pengdows.hangfire.tests \
+            pengdows.hangfire.integration.tests; then
+            echo "❌ TransactionScope usage is forbidden. Use BeginTransactionAsync()."
+            exit 1
+          fi
+
+          echo "✅ No TransactionScope usage found."
+
+      - name: Run integration tests (SQLite — no containers required)
+        run: |
+          dotnet test pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj \
+            --no-build --configuration Release \
+            --blame-hang --blame-hang-timeout 120s \
+            --filter "FullyQualifiedName~Sqlite"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: TestResults/**/coverage.cobertura.xml
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          disable_file_fixes: true
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage-report
+
+  publish:
+    name: Publish NuGet Package
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Strip local NuGet source
+        run: dotnet nuget remove source local-crud-artifacts || true
+
+      - name: Generate version number
+        id: version
+        run: |
+          version=$(sed -n 's/.*<VersionPrefix>\([^<]*\)<\/VersionPrefix>.*/\1/p' Directory.Build.props | head -n1)
+          if [[ -z "$version" ]]; then
+            echo "VersionPrefix not found in Directory.Build.props"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: dotnet build pengdows.hangfire.slnx -c Release
+
+      - name: Pack
+        run: |
+          dotnet pack pengdows.hangfire/pengdows.hangfire.csproj -c Release \
+            --no-build \
+            -p:PackageVersion=${{ steps.version.outputs.version }}
+
+      - name: Verify API key is set
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "NUGET_API_KEY is empty!"
+            exit 1
+          else
+            echo "NUGET_API_KEY is set (length ${#NUGET_API_KEY})"
+          fi
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Check if version already published
+        id: nuget_check
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.version.outputs.version }}"
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.nuget.org/v3-flatcontainer/pengdows.hangfire/${VERSION}/${VERSION}.nupkg")
+
+          echo "NuGet status for pengdows.hangfire v$VERSION: $status"
+
+          if [[ "$status" == "200" ]]; then
+            echo "Version $VERSION already published — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $VERSION is new — proceeding with publish."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push package to NuGet
+        if: steps.nuget_check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          dotnet nuget push pengdows.hangfire/bin/Release/pengdows.hangfire.${{ steps.version.outputs.version }}.nupkg \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Configure git identity
+        if: steps.nuget_check.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag the release
+        if: steps.nuget_check.outputs.skip != 'true'
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          existing=$(git tag -l "$TAG")
+          if [[ -n "$existing" ]]; then
+            tagged_sha=$(git rev-list -n1 "$TAG")
+            if [[ "$tagged_sha" == "${{ github.sha }}" ]]; then
+              echo "Tag $TAG already points at this commit — skipping."
+            else
+              echo "❌ Tag $TAG exists but points at $tagged_sha, not ${{ github.sha }}."
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.nuget_check.outputs.skip != 'true'
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: Automated release for version v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate next patch version
+        id: next_version
+        if: steps.nuget_check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          current="${{ steps.version.outputs.version }}"
+          IFS='.' read -r major minor patch <<< "$current"
+
+          if [[ -z "$major" || -z "$minor" || -z "$patch" ]]; then
+            echo "Could not parse semantic version: $current"
+            exit 1
+          fi
+
+          if ! [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]; then
+            echo "Semantic version must be numeric major.minor.patch: $current"
+            exit 1
+          fi
+
+          next_patch=$((patch + 1))
+          next_version="$major.$minor.$next_patch"
+          next_assembly_version="$major.$minor.$next_patch.0"
+
+          echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
+          echo "next_assembly_version=$next_assembly_version" >> "$GITHUB_OUTPUT"
+
+      - name: Note protected branch push skip
+        if: ${{ github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
+        run: echo "Branch is protected; skipping automated semver bump commit and push."
+
+      - name: Bump version and ratchet coverage baseline
+        if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+
+          sed -i -E "s|<VersionPrefix>[^<]+</VersionPrefix>|<VersionPrefix>${{ steps.next_version.outputs.next_version }}</VersionPrefix>|" Directory.Build.props
+          sed -i -E "s|<AssemblyVersion>[^<]+</AssemblyVersion>|<AssemblyVersion>${{ steps.next_version.outputs.next_assembly_version }}</AssemblyVersion>|" Directory.Build.props
+          sed -i -E "s|<FileVersion>[^<]+</FileVersion>|<FileVersion>${{ steps.next_version.outputs.next_assembly_version }}</FileVersion>|" Directory.Build.props
+
+          if git diff --exit-code Directory.Build.props > /dev/null 2>&1; then
+            echo "❌ Version bump had no effect — sed pattern did not match Directory.Build.props"
+            exit 1
+          fi
+
+          new_coverage="${{ needs.build-and-test.outputs.coverage }}"
+          current_baseline=$(tr -d '[:space:]' < .github/coverage-baseline.txt)
+          is_higher=$(awk "BEGIN { print ($new_coverage > $current_baseline) ? 1 : 0 }")
+          if [[ "$is_higher" -eq 1 ]]; then
+            printf '%s\n' "$new_coverage" > .github/coverage-baseline.txt
+            echo "📈 Coverage baseline ratcheted: ${current_baseline}% → ${new_coverage}%"
+          else
+            echo "ℹ️ Coverage baseline unchanged at ${current_baseline}%"
+          fi
+
+      - name: Commit semver bump
+        if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+          git add Directory.Build.props .github/coverage-baseline.txt
+          git commit -m "chore: bump version to v${{ steps.next_version.outputs.next_version }} [skip ci]"
+
+      - name: Push semver bump commit
+        if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
+        run: git push origin HEAD:${{ github.event.repository.default_branch }}
