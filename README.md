@@ -45,13 +45,28 @@ dotnet add package pengdows.hangfire
 
 ```csharp
 using pengdows.crud;
+using pengdows.crud.configuration;
+using Microsoft.Data.Sqlite;  // swap for your ADO.NET driver
 using Hangfire;
 
-// Create your pengdows.crud IDatabaseContext for your target database
-IDatabaseContext db = DatabaseContextFactory.Create(connectionString, dbType);
+// SQLite
+IDatabaseContext databaseContext = new DatabaseContext(
+    new DatabaseContextConfiguration
+    {
+        ConnectionString = "Data Source=hangfire.db"
+    },
+    SqliteClientFactory.Instance);
+
+// SQL Server — only the connection string and factory change
+// IDatabaseContext databaseContext = new DatabaseContext(
+//     new DatabaseContextConfiguration
+//     {
+//         ConnectionString = "Server=.;Database=myapp;Trusted_Connection=true"
+//     },
+//     SqlClientFactory.Instance);
 
 GlobalConfiguration.Configuration
-    .UsePengdowsCrudStorage(db, options =>
+    .UsePengdowsCrudStorage(databaseContext, options =>
     {
         options.SchemaName = "hangfire";
         options.AutoPrepareSchema = true;
@@ -101,12 +116,67 @@ Transactions are handled by collecting `Func<IDatabaseContext, Task>` commands i
 
 By default (`AutoPrepareSchema = true`) the schema is installed automatically on first use.
 
-For manual management, the DDL is available as embedded resources:
+For manual schema management, two options are provided:
 
-- `DefaultInstall.sql` — SQL Server dialect (ships with the package)
-- `Liquibase/` — versioned migrations for all supported databases
+- **`DefaultInstall.sql`** — SQL Server T-SQL dialect, ships with the package as an embedded resource
+- **`Liquibase/`** — versioned, cross-database migrations for all supported databases (inside the `pengdows.hangfire` NuGet package source tree at `pengdows.hangfire/Liquibase/`)
 
 The schema is versioned. Running against an existing schema applies only the missing migrations.
+
+### Running Liquibase Migrations
+
+The changelog entry point is `Liquibase/changelog-master.xml`. The schema name defaults to `HangFire` and can be overridden via the `schemaName` parameter.
+
+#### Liquibase CLI (standalone)
+
+Place your database JDBC driver in a local `drivers/` directory, then run:
+
+```bash
+liquibase \
+  --changelog-file=changelog-master.xml \
+  --search-path=/path/to/pengdows.hangfire/Liquibase \
+  --driver-classpath=drivers/your-jdbc-driver.jar \
+  --url="jdbc:postgresql://localhost:5432/myapp" \
+  --username=myuser \
+  --password=mypassword \
+  --parameter.schemaName=HangFire \
+  update
+```
+
+JDBC URL examples by database:
+
+| Database    | JDBC URL                                                            |
+|-------------|---------------------------------------------------------------------|
+| PostgreSQL  | `jdbc:postgresql://host:5432/database`                              |
+| SQL Server  | `jdbc:sqlserver://host:1433;databaseName=database`                  |
+| MySQL       | `jdbc:mysql://host:3306/database`                                   |
+| MariaDB     | `jdbc:mariadb://host:3306/database`                                 |
+| Oracle      | `jdbc:oracle:thin:@host:1521/service`                               |
+| Firebird    | `jdbc:firebirdsql://host:3050/database`                             |
+| CockroachDB | `jdbc:postgresql://host:26257/database`                             |
+| YugabyteDB  | `jdbc:postgresql://host:5433/database`                              |
+| TiDB        | `jdbc:mysql://host:4000/database`                                   |
+| DuckDB      | `jdbc:duckdb:/path/to/database.db`                                  |
+| SQLite      | `jdbc:sqlite:/path/to/database.db`                                  |
+
+#### docker-compose
+
+A `liquibase` service is defined in `docker-compose.yml`. It mounts the changelogs into the container and expects JDBC drivers in a local `./liquibase_drivers/` directory. Override the command to run migrations:
+
+```bash
+# Start your target database first
+docker compose up -d postgres
+
+# Run migrations (override the default --version command)
+docker compose run --rm liquibase \
+  --url="jdbc:postgresql://postgres:5432/myapp" \
+  --username=hangfire \
+  --password=password \
+  --parameter.schemaName=HangFire \
+  update
+```
+
+Drop your database's JDBC `.jar` into `./liquibase_drivers/` before running — the container mounts that directory as `/liquibase/lib/`.
 
 ## Building and Testing
 
