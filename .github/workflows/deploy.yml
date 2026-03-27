@@ -9,6 +9,7 @@ on:
       - 'LICENSE'
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened, closed ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -25,6 +26,7 @@ jobs:
   build-and-test:
     name: Build and test
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.action != 'closed' || github.event.pull_request.merged == true
     outputs:
       coverage: ${{ steps.coverage.outputs.coverage }}
 
@@ -190,7 +192,7 @@ jobs:
     name: Publish NuGet Package
     runs-on: ubuntu-latest
     needs: build-and-test
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.actor != 'github-actions[bot]'
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == github.event.repository.default_branch && github.actor != 'github-actions[bot]'
 
     steps:
       - name: Checkout code
