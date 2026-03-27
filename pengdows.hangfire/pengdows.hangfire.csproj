@@ -5,6 +5,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>pengdows.hangfire</RootNamespace>
+    <PackageId>pengdows.hangfire</PackageId>
+    <Description>SQL-first Hangfire job storage built on pengdows.crud — a strongly-typed, cross-database data access layer for .NET.</Description>
+    <Authors>Pengdows LLC</Authors>
+    <PackageTags>hangfire;job-storage;crud;sql;database;postgresql;sqlserver;mysql;sqlite;oracle;firebird</PackageTags>
+    <RepositoryUrl>https://github.com/pengdows/pengdows.hangfire</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/pengdows/pengdows.hangfire</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <WarningsAsErrors>true</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +25,12 @@
 
   <ItemGroup>
     <EmbeddedResource Include="DefaultInstall.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="" />
+    <None Include="../LICENSE" Pack="true" PackagePath="" />
+    <None Include="Liquibase/**/*" Pack="true" PackagePath="liquibase/" />
   </ItemGroup>
 
   <ItemGroup>
