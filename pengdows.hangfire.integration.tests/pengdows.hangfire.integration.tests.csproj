@@ -17,7 +17,7 @@
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.7.0" />
     <PackageReference Include="FirebirdSql.Data.FirebirdClient" Version="10.0.0" />
     <PackageReference Include="DuckDB.NET.Data.Full"     Version="1.2.0" />
-    <PackageReference Include="pengdows.crud" Version="2.*" />
+    <PackageReference Include="pengdows.crud" Version="2.0.3" />
     <PackageReference Include="Testcontainers"           Version="4.4.0" />
     <PackageReference Include="Testcontainers.MsSql"     Version="4.4.0" />
     <PackageReference Include="Testcontainers.MySql"     Version="4.4.0" />

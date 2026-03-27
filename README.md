@@ -2,6 +2,8 @@
 
 SQL-first Hangfire job storage built on [pengdows.crud](https://github.com/pengdows/pengdows.crud) — a strongly-typed, cross-database data access layer for .NET.
 
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/pengdows)
+
 ## Supported Databases
 
 | Database     | Notes                       |
