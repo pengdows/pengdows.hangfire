@@ -538,4 +538,68 @@ public sealed class ConnectionTests
         using var tx   = conn.CreateWriteTransaction();
         Assert.NotNull(tx);
     }
+
+    [Fact]
+    public void AcquireDistributedLock_ReturnsLock()
+    {
+        using var conn = MakeConnection();
+        using var lk   = conn.AcquireDistributedLock("res-conn", TimeSpan.FromSeconds(30));
+        Assert.NotNull(lk);
+    }
+
+    // ── FetchNextJob with cancelled token ────────────────────────────────────
+
+    [Fact]
+    public void FetchNextJob_PreCancelledToken_ThrowsOperationCanceled()
+    {
+        using var conn = MakeConnection();
+        using var cts  = new CancellationTokenSource();
+        cts.Cancel();
+        // Non-null, non-empty queues + pre-cancelled CT → while loop skipped → ThrowIfCancellationRequested
+        Assert.Throws<OperationCanceledException>(() => conn.FetchNextJob(new[] { "default" }, cts.Token));
+    }
+
+    // ── GetJobData success path ────────────────────────────────────────────────
+
+    [Fact]
+    public void GetJobData_ValidJobId_WithRow_ReturnsData()
+    {
+        var (storage, factory) = CreateStorage();
+        var invData = JsonHelper.Serialize(
+            Hangfire.Storage.InvocationData.SerializeJob(
+                HangfireJob.FromExpression(() => GC.Collect())));
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"]             = 1L,
+            ["StateId"]        = 1L,
+            ["StateName"]      = "Succeeded",
+            ["InvocationData"] = invData,
+            ["Arguments"]      = "[]",
+            ["CreatedAt"]      = DateTime.UtcNow,
+            ["ExpireAt"]       = DateTime.UtcNow.AddHours(1)
+        }});
+        using var conn = new PengdowsCrudConnection(storage);
+        var result = conn.GetJobData("1");
+        Assert.NotNull(result);
+        Assert.Equal("Succeeded", result.State);
+    }
+
+    // ── GetStateData success path ──────────────────────────────────────────────
+
+    [Fact]
+    public void GetStateData_ValidJobId_WithState_ReturnsData()
+    {
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"]        = 100L,
+            ["JobId"]     = 1L,
+            ["Name"]      = "Succeeded",
+            ["Reason"]    = "OK",
+            ["CreatedAt"] = DateTime.UtcNow,
+            ["Data"]      = "{\"Result\":\"done\"}"
+        }});
+        using var conn = new PengdowsCrudConnection(storage);
+        var result = conn.GetStateData("1");
+        Assert.NotNull(result);
+        Assert.Equal("Succeeded", result.Name);
+    }
 }

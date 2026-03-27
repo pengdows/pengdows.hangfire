@@ -4,7 +4,7 @@ using System;
 using Hangfire.Logging;
 using Hangfire.Server;
 
-internal sealed class CountersAggregator : IBackgroundProcess
+public sealed class CountersAggregator : IBackgroundProcess
 {
     private const int BatchSize = 1000;
     private static readonly TimeSpan DelayBetweenPasses = TimeSpan.FromMilliseconds(500);

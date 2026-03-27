@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using pengdows.hangfire;
 using pengdows.hangfire.gateways;
 using pengdows.crud;
 using pengdows.crud.enums;
@@ -58,7 +59,7 @@ public sealed class GatewayTests
          .FirstOrDefault(p => p.ParameterName.Contains(name, StringComparison.OrdinalIgnoreCase))?
          .Value;
 
-    private static readonly Dictionary<string, object?> ScalarRow =
+    private static readonly Dictionary<string, object> ScalarRow =
         new() { ["Value"] = 0L };
 
     // ── HashGateway ──────────────────────────────────────────────────────────
@@ -864,6 +865,299 @@ public sealed class GatewayTests
             Assert.False(NonQueryContains(factory, "ON CONFLICT"),
                 "Firebird: ON CONFLICT must not appear");
         }
+    }
+
+    // ── GetTtl non-null expiry coverage ──────────────────────────────────────
+
+    [Fact]
+    public async Task Hash_GetTtlAsync_WithUtcExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        // Scalar query reads first column of first row
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetTtlAsync_WithLocalExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task Hash_GetValueAsync_WithRow_ReturnsValue()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Key"]   = "mykey",
+            ["Field"] = "myfield",
+            ["Value"] = "myvalue"
+        }});
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).GetValueAsync("mykey", "myfield");
+            Assert.Equal("myvalue", result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetTtlAsync_WithUtcExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetTtlAsync_WithLocalExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetRangeAsync_WithNonNullValue_ReturnsValue()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"] = 1L, ["Key"] = "k", ["Value"] = "item"
+        }});
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            Assert.Contains("item", result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetRangeAsync_WithNullValue_ReturnsEmptyString()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"] = 1L, ["Key"] = "k"   // omit Value → null → ?? string.Empty
+        }});
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            Assert.Contains(string.Empty, result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetAllAsync_WithNonNullValue_ReturnsValue()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"] = 1L, ["Key"] = "k", ["Value"] = "item"
+        }});
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetAllAsync("k");
+            Assert.Contains("item", result);
+        }
+    }
+
+    [Fact]
+    public async Task List_GetAllAsync_WithNullValue_ReturnsEmptyString()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"] = 1L, ["Key"] = "k"   // omit Value → null → ?? string.Empty
+        }});
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).GetAllAsync("k");
+            Assert.Contains(string.Empty, result);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetTtlAsync_WithUtcExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task Set_GetTtlAsync_WithLocalExpiry_ReturnsPositiveDuration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            Assert.True(result > TimeSpan.Zero);
+        }
+    }
+
+    [Fact]
+    public async Task List_DeleteByKeyValueAsync_Oracle_UsesDbmsLobCompare()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Oracle);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        await using (ctx)
+        {
+            await new ListGateway(ctx).DeleteByKeyValueAsync("k", "v");
+            Assert.True(NonQueryContains(factory, "DBMS_LOB"));
+        }
+    }
+
+    // ── FetchNextJobAsync PostgreSQL branch ────────────────────────────────────
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_EmptyQueues_ReturnsNull()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                Array.Empty<string>(), CancellationToken.None);
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_PostgreSql_UsesReadCommitted()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.PostgreSql);
+        var ctx = new DatabaseContext("Host=fake", factory);
+        factory.EnqueueReaderResult(new[] {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 99L, ["Queue"] = "default" }
+        });
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+            Assert.NotNull(result);
+            Assert.Equal(99L, result!.Value.JobId);
+        }
+    }
+
+    // ── DeleteExpired non-empty batch coverage ─────────────────────────────────
+
+    [Fact]
+    public async Task Hash_DeleteExpiredAsync_WithExpiredRows_ReturnsNonZero()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Key"] = "k", ["Field"] = "f", ["Value"] = "v"
+        }});
+        await using (ctx)
+        {
+            var result = await new HashGateway(ctx).DeleteExpiredAsync(1000);
+            Assert.True(result >= 0);
+        }
+    }
+
+    [Fact]
+    public async Task List_DeleteExpiredAsync_WithExpiredRows_ReturnsNonZero()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"] = 1L, ["Key"] = "k", ["Value"] = "v"
+        }});
+        await using (ctx)
+        {
+            var result = await new ListGateway(ctx).DeleteExpiredAsync(1000);
+            Assert.True(result >= 0);
+        }
+    }
+
+    [Fact]
+    public async Task Set_DeleteExpiredAsync_WithExpiredRows_ReturnsNonZero()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Key"] = "k", ["Value"] = "v", ["Score"] = 0.0d
+        }});
+        await using (ctx)
+        {
+            var result = await new SetGateway(ctx).DeleteExpiredAsync(1000);
+            Assert.True(result >= 0);
+        }
+    }
+
+    [Fact]
+    public async Task Job_DeleteExpiredAsync_WithExpiredRows_ReturnsNonZero()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Id"]             = 1L,
+            ["InvocationData"] = "{}",
+            ["Arguments"]      = "[]",
+            ["CreatedAt"]      = DateTime.UtcNow
+        }});
+        await using (ctx)
+        {
+            var result = await new JobGateway(ctx).DeleteExpiredAsync(1000);
+            Assert.True(result >= 0);
+        }
+    }
+
+    [Fact]
+    public async Task AggregatedCounter_DeleteExpiredAsync_WithExpiredRows_ReturnsNonZero()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {
+            ["Key"] = "stats:success", ["Value"] = 5L
+        }});
+        await using (ctx)
+        {
+            var result = await new AggregatedCounterGateway(ctx).DeleteExpiredAsync(1000);
+            Assert.True(result >= 0);
+        }
+    }
+
+    // ── MetricFormattingExtensions null name/mode defaults ────────────────────
+
+    [Fact]
+    public void MetricFormatting_ToMetricGrid_NullNameAndMode_UsesDefaults()
+    {
+        var (ctx, _) = MakeContext();
+        var metrics = ctx.Metrics;
+        var grid = metrics.ToMetricGrid(null, null);
+        Assert.Contains("Database", grid);
+        Assert.Contains("Unknown", grid);
     }
 
     // Regression: ListGateway.TrimAsync generates

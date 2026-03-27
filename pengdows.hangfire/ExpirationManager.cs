@@ -5,7 +5,7 @@ using Hangfire.Logging;
 using Hangfire.Server;
 using Hangfire.Storage;
 
-internal sealed class ExpirationManager : IBackgroundProcess
+public sealed class ExpirationManager : IBackgroundProcess
 {
     private const string DistributedLockKey = "locks:expirationmanager";
     private static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromMinutes(5);

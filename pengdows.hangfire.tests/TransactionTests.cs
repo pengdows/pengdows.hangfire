@@ -463,6 +463,18 @@ public sealed class TransactionTests
 
     // ── helper stubs ─────────────────────────────────────────────────────────
 
+    [Fact]
+    public void CommitAsync_PostgreSql_UsesStrictConsistency()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.PostgreSql);
+        var ctx     = new DatabaseContext("Host=fake", factory);
+        var storage = new PengdowsCrudJobStorage(ctx);
+        using var tx = new PengdowsCrudWriteOnlyTransaction(storage);
+        tx.IncrementCounter("pg-key");
+        tx.Commit(); // should not throw; exercises PostgreSql isolation branch
+        Assert.True(factory.CreatedConnections.Any());
+    }
+
     private sealed class FakeFetchedJob : IFetchedJob
     {
         public string JobId => "0";

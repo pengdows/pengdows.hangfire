@@ -28,7 +28,9 @@ namespace pengdows.hangfire.stress.tests;
 ///
 /// Long-running tests (&gt;=10 minutes) are gated behind
 ///   [Trait("Category", "LongRunning")]
-/// and excluded from the default CI run.  Run them with:
+/// and should be excluded from the default run. Run the default suite with:
+///   dotnet test --filter "Category!=LongRunning"
+/// Run only the long-running suite with:
 ///   dotnet test --filter "Category=LongRunning"
 /// </summary>
 [Collection("SqlServerStress")]
