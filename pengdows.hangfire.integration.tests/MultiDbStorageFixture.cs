@@ -122,12 +122,14 @@ public class PostgresFixture : StorageFixture
 
     public override async Task InitializeAsync()
     {
+#pragma warning disable CS0618
         _container = new PostgreSqlBuilder()
             .WithImage("postgres:16")
             .WithDatabase("hangfire")
             .WithUsername("hangfire")
             .WithPassword("password")
             .Build();
+#pragma warning restore CS0618
         await _container.StartAsync();
         _connectionString = _container.GetConnectionString();
         await base.InitializeAsync();
@@ -153,8 +155,11 @@ public class SqlServerFixture : StorageFixture
 
     public override async Task InitializeAsync()
     {
-        _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")
+#pragma warning disable CS0618
+        _container = new MsSqlBuilder()
+            .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
             .Build();
+#pragma warning restore CS0618
         await _container.StartAsync();
         _connectionString = _container.GetConnectionString();
         await base.InitializeAsync();
@@ -183,11 +188,13 @@ public class MySqlFixture : StorageFixture
 
     public override async Task InitializeAsync()
     {
+#pragma warning disable CS0618
         _container = new MySqlBuilder()
             .WithImage("mysql:8.0")
             .WithDatabase("HangFire")
             .WithPassword("password")
             .Build();
+#pragma warning restore CS0618
         await _container.StartAsync();
         _connectionString = _container.GetConnectionString() + ";AllowUserVariables=true";
         await base.InitializeAsync();

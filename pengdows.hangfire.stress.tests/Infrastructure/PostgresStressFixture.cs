@@ -15,8 +15,7 @@ public sealed class PostgresStressFixture : BaseStressFixture
 
     protected override async Task StartContainerAsync()
     {
-        _container = new PostgreSqlBuilder()
-            .WithImage("postgres:16-alpine")
+        _container = new PostgreSqlBuilder("postgres:16-alpine")
             .WithCommand("-c", "max_connections=300")
             .Build();
         await _container.StartAsync();

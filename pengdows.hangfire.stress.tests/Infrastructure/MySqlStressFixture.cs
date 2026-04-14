@@ -14,8 +14,7 @@ public sealed class MySqlStressFixture : BaseStressFixture
 
     protected override async Task StartContainerAsync()
     {
-        _container = new MySqlBuilder()
-            .WithImage("mysql:8.0")
+        _container = new MySqlBuilder("mysql:8.0")
             .Build();
         await _container.StartAsync();
     }

@@ -14,8 +14,7 @@ public sealed class MariaDbStressFixture : BaseStressFixture
 
     protected override async Task StartContainerAsync()
     {
-        _container = new MySqlBuilder()
-            .WithImage("mariadb:11")
+        _container = new MySqlBuilder("mariadb:11")
             .Build();
         await _container.StartAsync();
     }
