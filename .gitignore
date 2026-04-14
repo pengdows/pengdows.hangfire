@@ -27,6 +27,9 @@ coverlet*.json
 *.sln.docstates
 *.DotSettings.user
 
+# CI-managed state (stored in GitHub repository variables)
+.github/coverage-baseline.txt
+
 # Local AI/tooling state
 .claude/settings.local.json
 .gemini/

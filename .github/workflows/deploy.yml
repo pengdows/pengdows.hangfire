@@ -21,6 +21,7 @@ concurrency:
 
 permissions:
   contents: write  # Needed for git push and release creation
+  actions: write   # Needed for gh variable set (coverage ratchet)
 
 jobs:
   build-and-test:
@@ -128,15 +129,13 @@ jobs:
           echo "📊 pengdows.hangfire line coverage: $coverage_percent%"
 
           minimum_floor=30
-          baseline_file=".github/coverage-baseline.txt"
-          if [[ ! -f "$baseline_file" ]]; then
-            echo "❌ Missing $baseline_file"
-            exit 1
+          baseline="${{ vars.COVERAGE_BASELINE }}"
+          if [[ -z "$baseline" ]]; then
+            echo "ℹ️ No COVERAGE_BASELINE variable set — using minimum floor"
+            baseline="$minimum_floor"
           fi
-
-          baseline=$(tr -d '[:space:]' < "$baseline_file")
           if ! [[ "$baseline" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "❌ Invalid baseline value in $baseline_file: '$baseline'"
+            echo "❌ Invalid COVERAGE_BASELINE value: '$baseline'"
             exit 1
           fi
 
@@ -346,31 +345,29 @@ jobs:
 
       - name: Ratchet coverage baseline
         if: steps.nuget_check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           new_coverage="${{ needs.build-and-test.outputs.coverage }}"
-          current_baseline=$(tr -d '[:space:]' < .github/coverage-baseline.txt)
+          current_baseline="${{ vars.COVERAGE_BASELINE }}"
+          if [[ -z "$current_baseline" ]]; then current_baseline="0"; fi
+
           is_higher=$(awk "BEGIN { print ($new_coverage > $current_baseline) ? 1 : 0 }")
           if [[ "$is_higher" -eq 1 ]]; then
-            printf '%s\n' "$new_coverage" > .github/coverage-baseline.txt
+            gh variable set COVERAGE_BASELINE --body "$new_coverage"
             echo "📈 Coverage baseline ratcheted: ${current_baseline}% → ${new_coverage}%"
           else
             echo "ℹ️ Coverage baseline unchanged at ${current_baseline}%"
           fi
 
-      - name: Commit semver bump and baseline
+      - name: Commit semver bump
         if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
-          git add Directory.Build.props .github/coverage-baseline.txt
+          git add Directory.Build.props
           git commit -m "chore: bump version to v${{ steps.next_version.outputs.next_version }} [skip ci]"
-
-      - name: Note protected branch — manual push required
-        if: ${{ github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
-        run: |
-          echo "⚠️  Branch is protected. Version bump and coverage baseline were updated locally"
-          echo "    but cannot be auto-pushed. Commit .github/coverage-baseline.txt manually."
 
       - name: Push semver bump commit
         if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
