@@ -108,19 +108,6 @@ public sealed class SqlServerFixture : IAsyncLifetime
             DistributedLockTtl = ttl,
         });
 
-    /// <summary>
-    /// Creates a storage instance that shares the same database context but
-    /// uses a specific retry delay and TTL.  Used by wait-strategy sweep tests
-    /// that measure the effect of retry-sleep granularity on latency percentiles.
-    /// </summary>
-    public PengdowsCrudJobStorage CreateStorageWithTtl(int retryDelayMs, TimeSpan ttl, bool jitter = true) =>
-        new PengdowsCrudJobStorage(Context, new PengdowsCrudStorageOptions
-        {
-            AutoPrepareSchema            = false,
-            DistributedLockTtl           = ttl,
-            DistributedLockRetryDelay    = TimeSpan.FromMilliseconds(retryDelayMs),
-            DistributedLockRetryJitter   = jitter,
-        });
 
     private IDatabaseContext BuildContext(int poolSize) =>
         new DatabaseContext(

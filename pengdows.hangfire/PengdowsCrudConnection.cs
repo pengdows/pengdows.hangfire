@@ -35,13 +35,18 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var result = _storage.JobQueues.FetchNextJobAsync(queues, cancellationToken).GetAwaiter().GetResult();
+            var result = _storage.JobQueues
+                .FetchNextJobAsync(queues, cancellationToken)
+                .GetAwaiter().GetResult();
             if (result.HasValue)
             {
                 return new PengdowsCrudFetchedJob(_storage, result.Value.JobId, result.Value.Queue);
             }
 
-            cancellationToken.WaitHandle.WaitOne(_storage.Options.QueuePollInterval);
+            var wait = _storage.Options.QueuePollJitter
+                ? JitteredInterval(_storage.Options.QueuePollInterval)
+                : _storage.Options.QueuePollInterval;
+            cancellationToken.WaitHandle.WaitOne(wait);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -404,4 +409,16 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
     }
 
     public override DateTime GetUtcDateTime() => DateTime.UtcNow;
+
+    /// <summary>
+    /// Returns a wait duration sampled uniformly from [base/2, base*3/2].
+    /// Breaks phase alignment so workers that all slept the same interval do
+    /// not wake simultaneously and collide on the same queue row.
+    /// </summary>
+    private static TimeSpan JitteredInterval(TimeSpan baseInterval)
+    {
+        var baseMs = (long)baseInterval.TotalMilliseconds;
+        var ms     = baseMs / 2 + Random.Shared.NextInt64(baseMs);
+        return TimeSpan.FromMilliseconds(ms);
+    }
 }

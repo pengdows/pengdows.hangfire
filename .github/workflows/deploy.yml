@@ -330,11 +330,7 @@ jobs:
           echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
           echo "next_assembly_version=$next_assembly_version" >> "$GITHUB_OUTPUT"
 
-      - name: Note protected branch push skip
-        if: ${{ github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
-        run: echo "Branch is protected; skipping automated semver bump commit and push."
-
-      - name: Bump version and ratchet coverage baseline
+      - name: Bump version
         if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
@@ -348,6 +344,11 @@ jobs:
             exit 1
           fi
 
+      - name: Ratchet coverage baseline
+        if: steps.nuget_check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
           new_coverage="${{ needs.build-and-test.outputs.coverage }}"
           current_baseline=$(tr -d '[:space:]' < .github/coverage-baseline.txt)
           is_higher=$(awk "BEGIN { print ($new_coverage > $current_baseline) ? 1 : 0 }")
@@ -358,12 +359,18 @@ jobs:
             echo "ℹ️ Coverage baseline unchanged at ${current_baseline}%"
           fi
 
-      - name: Commit semver bump
+      - name: Commit semver bump and baseline
         if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
           git add Directory.Build.props .github/coverage-baseline.txt
           git commit -m "chore: bump version to v${{ steps.next_version.outputs.next_version }} [skip ci]"
+
+      - name: Note protected branch — manual push required
+        if: ${{ github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}
+        run: |
+          echo "⚠️  Branch is protected. Version bump and coverage baseline were updated locally"
+          echo "    but cannot be auto-pushed. Commit .github/coverage-baseline.txt manually."
 
       - name: Push semver bump commit
         if: ${{ !github.ref_protected && steps.nuget_check.outputs.skip != 'true' }}

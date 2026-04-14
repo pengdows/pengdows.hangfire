@@ -77,7 +77,6 @@ public abstract class DistributedLockFacts<TFixture> where TFixture : StorageFix
         // New acquire should steal the expired row and succeed without timeout
         using var lk = new PengdowsCrudDistributedLock(_f.Storage, resource, TimeSpan.FromSeconds(5));
         Assert.NotNull(lk);
-        Assert.Equal(AcquireMode.TtlSteal, lk.HowAcquired);
 
         var record = await _f.Storage.Locks.RetrieveOneAsync(resource);
         Assert.NotNull(record);

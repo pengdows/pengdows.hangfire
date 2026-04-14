@@ -18,7 +18,7 @@ public sealed class ExpirationManagerTests
     }
 
     [Fact]
-    public void Execute_IssuesDeleteCalls()
+    public void RunOnce_IssuesDeleteCalls()
     {
         var (storage, factory) = CreateStorage();
         var manager = new ExpirationManager(storage, TimeSpan.FromMinutes(1));
@@ -29,45 +29,17 @@ public sealed class ExpirationManagerTests
             factory.EnqueueReaderResult(new[] { new System.Collections.Generic.Dictionary<string, object> { ["Value"] = 0L } });
         }
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
-
-        manager.Execute(context);
+        manager.RunOnce();
         Assert.True(factory.CreatedConnections.Any());
     }
 
     [Fact]
-    public void Execute_HandlesLockTimeoutGracefully()
+    public void RunOnce_HandlesLockTimeoutGracefully()
     {
-        var (storage, factory) = CreateStorage();
+        var (storage, _) = CreateStorage();
         var manager = new ExpirationManager(storage, TimeSpan.FromMinutes(1));
-        
-        factory.EnqueueReaderResult(new[] { 
-            new System.Collections.Generic.Dictionary<string, object> { 
-                ["Resource"] = "locks:expirationmanager", 
-                ["Id"] = "other-guy",
-                ["CreatedAt"] = DateTime.UtcNow
-            } 
-        });
-        
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
 
-        manager.Execute(context);
+        manager.RunOnce();
     }
 
     [Fact]

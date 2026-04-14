@@ -62,6 +62,7 @@ public sealed class PengdowsCrudJobStorage : JobStorage
     {
         yield return new ExpirationManager(this, Options.JobExpirationCheckInterval);
         yield return new CountersAggregator(this, Options.CountersAggregateInterval);
+        yield return new FetchedJobWatchdog(this, Options.InvisibilityTimeout);
     }
 
     public override bool HasFeature(string featureId) =>

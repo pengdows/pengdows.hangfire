@@ -67,6 +67,13 @@ public sealed class BoundaryPressureTests
         var storage  = _f.CreateStorageWithPoolSize(poolSize, TimeSpan.FromSeconds(30));
         var tracker  = new OwnershipTracker();
 
+        // Pre-create the lock row so this test exercises pool-pressure contention
+        // against an existing resource, not the empty-row cold-start path.
+        using (var warmup = new PengdowsCrudDistributedLock(
+                   storage, resource, TimeSpan.FromSeconds(5)))
+        {
+        }
+
         long started = 0, completed = 0;
         long succeeded = 0, lockTimedOut = 0, poolRejected = 0;
         var unexpectedExceptions = new ConcurrentBag<Exception>();
@@ -169,6 +176,14 @@ public sealed class BoundaryPressureTests
         var resources = Enumerable.Range(0, resourceCount).Select(i => prefix + i).ToArray();
         var storage   = _f.CreateStorageWithPoolSize(poolSize, TimeSpan.FromSeconds(30));
         var tracker   = new OwnershipTracker();
+
+        // Seed every resource once so the test isolates skewed contention under
+        // pool pressure instead of mixing in first-writer row creation races.
+        foreach (var resource in resources)
+        {
+            using var warmup = new PengdowsCrudDistributedLock(
+                storage, resource, TimeSpan.FromSeconds(5));
+        }
 
         long started = 0, completed = 0;
         long succeeded = 0, lockTimedOut = 0, poolRejected = 0;

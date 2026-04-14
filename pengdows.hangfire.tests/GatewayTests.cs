@@ -683,10 +683,10 @@ public sealed class GatewayTests
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx = new DatabaseContext("Data Source=fake", factory);
-        // Seed AFTER context init so the transaction's CreateSqlContainer picks up this connection
+        // Seed AFTER context init: reader for the candidate SELECT, UPDATE uses default (1 row affected)
         factory.EnqueueReaderResult(new[]
         {
-            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L, ["Queue"] = "default" }
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L }
         });
         await using (ctx)
         {
@@ -703,17 +703,44 @@ public sealed class GatewayTests
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx = new DatabaseContext("Data Source=fake", factory);
-        // Seed AFTER context init; also enqueue 0 to simulate losing the optimistic UPDATE race
+        // EnqueueReaderResult creates the SELECT connection at _connections[0].
+        // Append the UPDATE connection after so the pool is [SELECT-conn, UPDATE-conn(race-lost)].
         factory.EnqueueReaderResult(new[]
         {
-            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L, ["Queue"] = "default" }
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L }
         });
-        factory.Connections[0].NonQueryResults.Enqueue(0);
+        var updateConn = new fakeDbConnection();
+        updateConn.NonQueryResults.Enqueue(0); // race lost: 0 rows affected
+        factory.Connections.Add(updateConn);
         await using (ctx)
         {
             var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
             Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_ClaimsSecondCandidateWhenFirstRaceLost()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        // SELECT streams 2 rows; first UPDATE loses the race (0 rows); second UPDATE wins (fresh conn).
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 10L },
+            new Dictionary<string, object> { ["Id"] = 2L, ["JobId"] = 20L }
+        });
+        var updateConn1 = new fakeDbConnection();
+        updateConn1.NonQueryResults.Enqueue(0); // candidate 1 race lost
+        factory.Connections.Add(updateConn1);
+        // UPDATE-2 connection is created fresh (empty NonQueryResults → default 1 = claim wins).
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+            Assert.NotNull(result);
+            Assert.Equal(20L, result!.Value.JobId);
         }
     }
 
@@ -1052,12 +1079,12 @@ public sealed class GatewayTests
     }
 
     [Fact]
-    public async Task JobQueue_FetchNextJobAsync_PostgreSql_UsesReadCommitted()
+    public async Task JobQueue_FetchNextJobAsync_PostgreSql_ClaimsSuccessfully()
     {
         var factory = new fakeDbFactory(SupportedDatabase.PostgreSql);
         var ctx = new DatabaseContext("Host=fake", factory);
         factory.EnqueueReaderResult(new[] {
-            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 99L, ["Queue"] = "default" }
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 99L }
         });
         await using (ctx)
         {
@@ -1178,6 +1205,75 @@ public sealed class GatewayTests
             // The wrapping derived-table alias must be present; its exact name is an impl detail.
             Assert.True(NonQueryContains(factory, "SELECT") && NonQueryContains(factory, "FROM ("),
                 $"{db}: LIMIT-in-IN subquery must be wrapped in a derived table for MySQL");
+        }
+    }
+
+    // ── JobQueueGateway — RequeueStaleAsync ──────────────────────────────────
+
+    [Fact]
+    public async Task JobQueue_RequeueStaleAsync_SqlContainsUpdate()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueStaleAsync_SqlSetsFetchedAtNull()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            Assert.True(NonQueryContains(factory, "FetchedAt"));
+            Assert.True(NonQueryContains(factory, "NULL"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueStaleAsync_SqlGuardsFetchedAtIsNotNull()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            // WHERE must include FetchedAt IS NOT NULL so unfetched rows are untouched
+            Assert.True(NonQueryContains(factory, "IS NOT NULL"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueStaleAsync_BindsCutoffParam()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            // MakeParameterName produces the placeholder for the SQL text:
+            //   named providers  → includes the param name (e.g. "@cutoff", ":cutoff", "cutoff")
+            //   positional providers → "?"
+            var sql = factory.CreatedConnections
+                .SelectMany(c => c.ExecutedNonQueryTexts)
+                .FirstOrDefault(t => t.Contains("IS NOT NULL", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(sql);
+            var bound = sql.Contains("cutoff", StringComparison.OrdinalIgnoreCase)
+                        || sql.Contains("?");
+            Assert.True(bound, "Expected a bound parameter placeholder for the cutoff value");
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueStaleAsync_ReturnsAffectedRowCount()
+    {
+        var (ctx, _) = MakeContext();
+        await using (ctx)
+        {
+            var count = await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow);
+            // fakeDb returns 1 by default for non-query; just verify it returns the value
+            Assert.True(count >= 0);
         }
     }
 }

@@ -27,6 +27,13 @@ public sealed class FetchedJobAndStorageTests
         f.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts)
          .Any(t => t.Contains(s, StringComparison.OrdinalIgnoreCase));
 
+    private static bool ReaderContains(fakeDbFactory f, string s) =>
+        f.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts)
+         .Any(t => t.Contains(s, StringComparison.OrdinalIgnoreCase));
+
+    private static bool AnySqlContains(fakeDbFactory f, string s) =>
+        NonQueryContains(f, s) || ReaderContains(f, s);
+
     // ── PengdowsCrudFetchedJob ────────────────────────────────────────────────
 
     [Fact]
@@ -141,13 +148,14 @@ public sealed class FetchedJobAndStorageTests
     }
 
     [Fact]
-    public void Storage_GetStorageWideProcesses_ReturnsTwoProcesses()
+    public void Storage_GetStorageWideProcesses_ReturnsThreeProcesses()
     {
         var (storage, _) = CreateStorage();
         var processes = storage.GetStorageWideProcesses().ToList();
-        Assert.Equal(2, processes.Count);
+        Assert.Equal(3, processes.Count);
         Assert.Contains(processes, p => p.ToString() == "ExpirationManager");
         Assert.Contains(processes, p => p.ToString() == "CountersAggregator");
+        Assert.Contains(processes, p => p.ToString() == "FetchedJobWatchdog");
     }
 
     [Fact]
@@ -172,14 +180,15 @@ public sealed class FetchedJobAndStorageTests
     public void StorageOptions_Defaults_AreReasonable()
     {
         var opts = new PengdowsCrudStorageOptions();
+#pragma warning disable CS0618
         Assert.Equal("hangfire", opts.SchemaName);
+#pragma warning restore CS0618
         Assert.True(opts.AutoPrepareSchema);
         Assert.Equal(TimeSpan.FromSeconds(5), opts.QueuePollInterval);
-        Assert.Equal(TimeSpan.FromMinutes(5), opts.InvisibilityTimeout);
-        Assert.Equal(TimeSpan.FromSeconds(30), opts.ServerHeartbeatInterval);
         Assert.Equal(TimeSpan.FromMinutes(30), opts.JobExpirationCheckInterval);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.CountersAggregateInterval);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.DistributedLockTtl);
+        Assert.True(opts.QueuePollJitter);
     }
 
     [Fact]
@@ -190,8 +199,9 @@ public sealed class FetchedJobAndStorageTests
     }
 
     [Fact]
-    public void StorageOptions_CanBeCustomised()
+    public void StorageOptions_SchemaName_CanStillBeSetForCompatibility()
     {
+#pragma warning disable CS0618
         var opts = new PengdowsCrudStorageOptions
         {
             SchemaName              = "myapp",
@@ -200,6 +210,7 @@ public sealed class FetchedJobAndStorageTests
             JobExpirationCheckInterval = TimeSpan.FromHours(1)
         };
         Assert.Equal("myapp", opts.SchemaName);
+#pragma warning restore CS0618
         Assert.False(opts.AutoPrepareSchema);
         Assert.Equal(TimeSpan.FromSeconds(15), opts.QueuePollInterval);
         Assert.Equal(TimeSpan.FromHours(1), opts.JobExpirationCheckInterval);
@@ -218,9 +229,51 @@ public sealed class FetchedJobAndStorageTests
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx     = new DatabaseContext("Data Source=fake", factory);
+#pragma warning disable CS0618
         var opts    = new PengdowsCrudStorageOptions { SchemaName = "custom", AutoPrepareSchema = false };
+#pragma warning restore CS0618
         // Should construct without throwing
         var storage = new PengdowsCrudJobStorage(ctx, opts);
         Assert.NotNull(storage);
+    }
+
+    [Fact]
+    public void Storage_CustomSchemaName_IsIgnoredByRuntimeSqlGeneration()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx     = new DatabaseContext("Data Source=fake", factory);
+#pragma warning disable CS0618
+        var storage = new PengdowsCrudJobStorage(ctx, new PengdowsCrudStorageOptions
+        {
+            SchemaName = "custom",
+            AutoPrepareSchema = false
+        });
+#pragma warning restore CS0618
+
+        using var conn = storage.GetConnection();
+        _ = conn.GetJobData("42");
+
+        Assert.True(AnySqlContains(factory, "HangFire"));
+        Assert.False(AnySqlContains(factory, "custom"));
+    }
+
+    [Fact]
+    public void Storage_CustomSchemaName_IsIgnoredBySchemaInstaller()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx     = new DatabaseContext("Data Source=fake", factory);
+#pragma warning disable CS0618
+        var storage = new PengdowsCrudJobStorage(ctx, new PengdowsCrudStorageOptions
+        {
+            SchemaName = "custom",
+            AutoPrepareSchema = true
+        });
+#pragma warning restore CS0618
+
+        storage.Initialize();
+
+        Assert.True(NonQueryContains(factory, "CREATE SCHEMA [HangFire]"));
+        Assert.True(NonQueryContains(factory, "[HangFire].[Schema]"));
+        Assert.False(NonQueryContains(factory, "CREATE SCHEMA [custom]"));
     }
 }

@@ -18,6 +18,7 @@ public abstract class BaseStressFixture : IAsyncLifetime
     protected abstract string ConnectionString { get; }
     protected abstract DbProviderFactory Factory { get; }
     protected virtual int DefaultPoolSize => 256;
+    protected virtual string PoolSizeKeyword => "Max Pool Size";
 
     public virtual async Task InitializeAsync()
     {
@@ -49,7 +50,7 @@ public abstract class BaseStressFixture : IAsyncLifetime
         new DatabaseContext(
             new DatabaseContextConfiguration
             {
-                ConnectionString = ConnectionString + (ConnectionString.Contains("Pool Size") ? "" : $";Max Pool Size={poolSize};"),
+                ConnectionString = ConnectionString + (ConnectionString.Contains("Pool Size") ? "" : $";{PoolSizeKeyword}={poolSize};"),
                 MaxConcurrentWrites = poolSize,
                 MaxConcurrentReads = poolSize,
                 EnableMetrics = true,
@@ -89,15 +90,18 @@ internal static class SchemaHelper
 {
     public static async Task InstallFromResourceAsync(IDatabaseContext db, string resourceName)
     {
-        // Path to the integration tests SQL files
-        var root = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "..", ".."));
+        // AppContext.BaseDirectory = bin/Debug/net8.0 — go up 4 levels to reach the solution root.
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         var ddlPath = Path.Combine(root, "pengdows.hangfire.integration.tests", resourceName);
         var ddl = await File.ReadAllTextAsync(ddlPath);
 
         foreach (var stmt in ddl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (string.IsNullOrWhiteSpace(stmt) || stmt.StartsWith("--")) continue;
-            await using var sc = db.CreateSqlContainer(stmt);
+            // Strip line comments before deciding whether the chunk is empty.
+            var stripped = string.Join('\n',
+                stmt.Split('\n').Where(line => !line.TrimStart().StartsWith("--"))).Trim();
+            if (string.IsNullOrWhiteSpace(stripped)) continue;
+            await using var sc = db.CreateSqlContainer(stripped);
             await sc.ExecuteNonQueryAsync();
         }
     }

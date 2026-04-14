@@ -18,7 +18,7 @@ public sealed class CountersAggregatorTests
     }
 
     [Fact]
-    public void Execute_IssuesAggregateCalls()
+    public void RunOnce_IssuesAggregateCalls()
     {
         var (storage, factory) = CreateStorage();
         var aggregator = new CountersAggregator(storage, TimeSpan.FromMinutes(1));
@@ -35,23 +35,13 @@ public sealed class CountersAggregatorTests
         
         factory.EnqueueReaderResult(new[] { row });
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
-
-        aggregator.Execute(context);
+        aggregator.RunOnce();
 
         Assert.True(factory.CreatedConnections.Any());
     }
 
     [Fact]
-    public void Execute_LoopsWhenBatchSizeReached()
+    public void RunOnce_LoopsWhenBatchSizeReached()
     {
         var (storage, factory) = CreateStorage();
         var aggregator = new CountersAggregator(storage, TimeSpan.FromMinutes(1));
@@ -67,17 +57,7 @@ public sealed class CountersAggregatorTests
         // Pass 2: return 0 rows
         factory.EnqueueReaderResult(Array.Empty<System.Collections.Generic.Dictionary<string, object>>());
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
-
-        aggregator.Execute(context);
+        aggregator.RunOnce();
 
         Assert.True(factory.CreatedConnections.Count >= 2);
     }

@@ -9,14 +9,12 @@ using pengdows.crud;
 public interface IDistributedLockGateway : ITableGateway<DistributedLockRecord, string>
 {
     /// <summary>
-    /// Attempts to acquire the lock for <paramref name="resource"/>.
-    /// On INSERT success returns <c>(record, false)</c>.
-    /// On PK violation, attempts an atomic UPDATE WHERE expires_at &lt;= asOf:
-    ///   if 1 row updated returns <c>(record, true)</c> (steal);
-    ///   if 0 rows updated returns <c>(null, false)</c> (live row held by another owner).
+    /// Attempts to acquire the lock for <paramref name="resource"/> in a single UPSERT.
+    /// Returns <c>true</c> when the row was inserted (no prior holder) or stolen (prior
+    /// holder's TTL had expired); returns <c>false</c> when the lock is actively held
+    /// by another owner whose TTL has not yet lapsed.
     /// </summary>
-    Task<(DistributedLockRecord? Record, bool WasSteal)> TryAcquireAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf);
+    Task<bool> TryAcquireAsync(string resource, string ownerId, DateTime expiresAt, DateTime asOf);
 
     Task<bool> TryRenewAsync(string resource, string ownerId, int expectedVersion, DateTime newExpiresAt);
     Task ReleaseAsync(string resource, string ownerId);
