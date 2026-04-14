@@ -4,7 +4,7 @@
 
 # Test results and coverage
 TestResults/
-coverage-report/
+coverage-report*/
 *.trx
 *.coverage
 *.coveragexml
