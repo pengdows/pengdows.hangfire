@@ -31,6 +31,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="pengdows.crud" Version="2.0.3" />
+    <PackageReference Include="pengdows.crud.analyzers" Version="2.0.5" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

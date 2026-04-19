@@ -8,9 +8,12 @@ public sealed class JobParameterGateway : PrimaryKeyTableGateway<JobParameter>, 
 {
     public JobParameterGateway(IDatabaseContext context) : base(context) { }
 
-    public async Task<Dictionary<string, string>> GetAllForJobAsync(long jobId)
+    public Task<Dictionary<string, string>> GetAllForJobAsync(long jobId) => GetAllForJobAsync(jobId, null);
+
+    public async Task<Dictionary<string, string>> GetAllForJobAsync(long jobId, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("p");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("p", ctx);
         sc.AppendWhere();
         sc.AppendName("p.JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         var parameters = await LoadListAsync(sc);

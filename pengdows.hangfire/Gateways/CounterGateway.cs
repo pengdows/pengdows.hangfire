@@ -20,17 +20,20 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
     /// Groups Counter rows by Key, sums their Values, upserts into AggregatedCounter, then deletes the processed rows.
     /// Returns the number of Counter rows processed.
     /// </summary>
-    public async Task<int> AggregateAsync(int batchSize)
+    public Task<int> AggregateAsync(int batchSize) => AggregateAsync(batchSize, null);
+
+    public async Task<int> AggregateAsync(int batchSize, IDatabaseContext? context = null)
     {
+        var ctx = context ?? Context;
         // Read a batch of counter rows
-        await using var readSc = Context.CreateSqlContainer();
+        await using var readSc = ctx.CreateSqlContainer();
         readSc.AppendQuery("SELECT ")
               .AppendName("Id").AppendComma()
               .AppendName("Key").AppendComma()
               .AppendName("Value")
               .AppendQuery(" FROM ").AppendQuery(WrappedTableName)
               .AppendQuery(" ORDER BY ").AppendName("Id").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(readSc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(readSc.Query, 0, batchSize);
 
         var rows = new List<(long Id, string Key, int Value)>();
         await using (var reader = await readSc.ExecuteReaderAsync())
@@ -47,11 +50,11 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
         }
 
         // Group and upsert into AggregatedCounter
-        var aggregatedTableName = new AggregatedCounterGateway(Context).WrappedTableName;
+        var aggregatedTableName = new AggregatedCounterGateway(ctx).WrappedTableName;
         foreach (var (aggKey, aggValue) in rows.GroupBy(r => r.Key).Select(g => (g.Key, g.Sum(r => (long)r.Value))))
         {
-            await using var upsertSc = Context.CreateSqlContainer();
-            if (Context.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
+            await using var upsertSc = ctx.CreateSqlContainer();
+            if (ctx.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
             {
                 upsertSc.AppendQuery("MERGE ").AppendQuery(aggregatedTableName).AppendQuery(" WITH (HOLDLOCK) AS t")
                     .AppendQuery(" USING (VALUES (");
@@ -64,7 +67,7 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
                     .AppendQuery(" WHEN NOT MATCHED THEN INSERT (").AppendName("Key").AppendComma().AppendName("Value").AppendQuery(")")
                     .AppendQuery(" VALUES (s.").AppendName("Key").AppendQuery(", s.").AppendName("Value").AppendQuery(");");
             }
-            else if (Context.Product == pengdows.crud.enums.SupportedDatabase.Oracle)
+            else if (ctx.Product == pengdows.crud.enums.SupportedDatabase.Oracle)
             {
                 // Oracle does not support ON CONFLICT; use MERGE INTO ... USING DUAL
                 upsertSc.AppendQuery("MERGE INTO ").AppendQuery(aggregatedTableName).AppendQuery(" t")
@@ -79,7 +82,7 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
                     .AppendQuery(" WHEN NOT MATCHED THEN INSERT (").AppendName("Key").AppendComma().AppendName("Value").AppendQuery(")")
                     .AppendQuery(" VALUES (s.").AppendName("Key").AppendQuery(", s.").AppendName("Value").AppendQuery(")");
             }
-            else if (Context.Product is pengdows.crud.enums.SupportedDatabase.MySql
+            else if (ctx.Product is pengdows.crud.enums.SupportedDatabase.MySql
                                         or pengdows.crud.enums.SupportedDatabase.MariaDb
                                         or pengdows.crud.enums.SupportedDatabase.TiDb)
             {
@@ -91,7 +94,7 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
                     .AppendQuery(") ON DUPLICATE KEY UPDATE ").AppendName("Value")
                     .AppendQuery(" = ").AppendName("Value").AppendQuery(" + VALUES(").AppendName("Value").AppendQuery(")");
             }
-            else if (Context.Product == pengdows.crud.enums.SupportedDatabase.Firebird)
+            else if (ctx.Product == pengdows.crud.enums.SupportedDatabase.Firebird)
             {
                 // Firebird does not support ON CONFLICT; uses MERGE with FROM RDB$DATABASE.
                 // Explicit CASTs are required: Firebird cannot infer parameter types in a
@@ -125,7 +128,7 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
 
         // Delete the processed rows by Id
         var ids = rows.Select(r => r.Id).ToList();
-        await using var delSc = Context.CreateSqlContainer();
+        await using var delSc = ctx.CreateSqlContainer();
         delSc.AppendQuery("DELETE FROM ").AppendQuery(WrappedTableName).AppendWhere();
         delSc.AppendName("Id").AppendIn();
         for (int i = 0; i < ids.Count; i++)

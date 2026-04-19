@@ -8,15 +8,18 @@ public sealed class AggregatedCounterGateway : TableGateway<AggregatedCounter, s
 {
     public AggregatedCounterGateway(IDatabaseContext context) : base(context) { }
 
-    public async Task<Dictionary<string, long>> GetTimelineAsync(string[] keys)
+    public Task<Dictionary<string, long>> GetTimelineAsync(string[] keys) => GetTimelineAsync(keys, null);
+
+    public async Task<Dictionary<string, long>> GetTimelineAsync(string[] keys, IDatabaseContext? context = null)
     {
+        var ctx = context ?? Context;
         var result = new Dictionary<string, long>();
         if (keys.Length == 0)
         {
             return result;
         }
 
-        await using var sc = Context.CreateSqlContainer();
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT ").AppendName("Key").AppendComma().AppendName("Value")
           .AppendQuery(" FROM ").AppendQuery(WrappedTableName)
           .AppendWhere().AppendName("Key").AppendIn();
@@ -40,28 +43,34 @@ public sealed class AggregatedCounterGateway : TableGateway<AggregatedCounter, s
         return result;
     }
 
-    public async Task<long> GetValueAsync(string key)
+    public Task<long> GetValueAsync(string key) => GetValueAsync(key, null);
+
+    public async Task<long> GetValueAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT ").AppendName("Value")
           .AppendQuery(" FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         return await sc.ExecuteScalarOrNullAsync<long?>() ?? 0L;
     }
 
-    public async Task<int> DeleteExpiredAsync(int batchSize)
+    public Task<int> DeleteExpiredAsync(int batchSize) => DeleteExpiredAsync(batchSize, null);
+
+    public async Task<int> DeleteExpiredAsync(int batchSize, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("a");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("a", ctx);
         sc.AppendWhere();
         sc.AppendName("a.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
         sc.AppendQuery(" ORDER BY ").AppendName("a.Key").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);
         if (expired.Count == 0)
         {
             return 0;
         }
 
-        return await BatchDeleteAsync(expired.Select(e => e.Key));
+        return await BatchDeleteAsync(expired.Select(e => e.Key), ctx);
     }
 }

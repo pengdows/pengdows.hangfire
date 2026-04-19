@@ -72,17 +72,23 @@ public sealed class ListGateway : TableGateway<List, long>, IListGateway
         await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<long> GetCountAsync(string key)
+    public Task<long> GetCountAsync(string key) => GetCountAsync(key, null);
+
+    public async Task<long> GetCountAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT COUNT(*) FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         return await sc.ExecuteScalarRequiredAsync<long>();
     }
 
-    public async Task<TimeSpan> GetTtlAsync(string key)
+    public Task<TimeSpan> GetTtlAsync(string key) => GetTtlAsync(key, null);
+
+    public async Task<TimeSpan> GetTtlAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT MIN(").AppendName("ExpireAt").AppendQuery(") FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         var result = await sc.ExecuteScalarOrNullAsync<DateTime?>();
@@ -96,20 +102,26 @@ public sealed class ListGateway : TableGateway<List, long>, IListGateway
         return expiry - DateTime.UtcNow;
     }
 
-    public async Task<List<string>> GetRangeAsync(string key, int from, int to)
+    public Task<List<string>> GetRangeAsync(string key, int from, int to) => GetRangeAsync(key, from, to, null);
+
+    public async Task<List<string>> GetRangeAsync(string key, int from, int to, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("l");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("l", ctx);
         sc.AppendWhere();
         sc.AppendName("l.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendQuery(" ORDER BY ").AppendName("l.Id").AppendQuery(" DESC");
-        Context.Dialect.AppendPaging(sc.Query, from, to - from + 1);
+        ctx.Dialect.AppendPaging(sc.Query, from, to - from + 1);
         var items = await LoadListAsync(sc);
         return items.Select(l => l.Value ?? string.Empty).ToList();
     }
 
-    public async Task<List<string>> GetAllAsync(string key)
+    public Task<List<string>> GetAllAsync(string key) => GetAllAsync(key, null);
+
+    public async Task<List<string>> GetAllAsync(string key, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("l");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("l", ctx);
         sc.AppendWhere();
         sc.AppendName("l.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendQuery(" ORDER BY ").AppendName("l.Id").AppendQuery(" DESC");
@@ -119,7 +131,8 @@ public sealed class ListGateway : TableGateway<List, long>, IListGateway
 
     public async Task<int> UpdateExpireAtAsync(string key, DateTime? expireAt, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("ExpireAt").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("expireAt", DbType.DateTime, expireAt as object ?? DBNull.Value));
@@ -128,19 +141,22 @@ public sealed class ListGateway : TableGateway<List, long>, IListGateway
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<int> DeleteExpiredAsync(int batchSize)
+    public Task<int> DeleteExpiredAsync(int batchSize) => DeleteExpiredAsync(batchSize, null);
+
+    public async Task<int> DeleteExpiredAsync(int batchSize, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("l");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("l", ctx);
         sc.AppendWhere();
         sc.AppendName("l.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
         sc.AppendQuery(" ORDER BY ").AppendName("l.Key").AppendQuery(", ").AppendName("l.Id").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);
         if (expired.Count == 0)
         {
             return 0;
         }
 
-        return await BatchDeleteAsync(expired.Select(l => l.ID));
+        return await BatchDeleteAsync(expired.Select(l => l.ID), ctx);
     }
 }

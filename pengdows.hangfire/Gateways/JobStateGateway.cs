@@ -10,16 +10,20 @@ public sealed class JobStateGateway : TableGateway<State, long>, IJobStateGatewa
 
     public async Task<State?> GetLatestAsync(long jobId, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s", context);
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Id").AppendQuery(" DESC");
         return await LoadSingleAsync(sc);
     }
 
-    public async Task<List<State>> GetAllForJobAsync(long jobId)
+    public Task<List<State>> GetAllForJobAsync(long jobId) => GetAllForJobAsync(jobId, null);
+
+    public async Task<List<State>> GetAllForJobAsync(long jobId, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Id").AppendQuery(" DESC");

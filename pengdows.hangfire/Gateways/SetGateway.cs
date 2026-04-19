@@ -8,24 +8,34 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
 {
     public SetGateway(IDatabaseContext context) : base(context) { }
 
-    public async Task<HashSet<string>> GetAllItemsAsync(string key)
+    public Task<HashSet<string>> GetAllItemsAsync(string key) => GetAllItemsAsync(key, null);
+
+    public async Task<HashSet<string>> GetAllItemsAsync(string key, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         var sets = await LoadListAsync(sc);
         return sets.Select(s => s.Value).ToHashSet()!;
     }
 
-    public async Task<string?> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore)
+    public Task<string?> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore)
+        => GetFirstByLowestScoreAsync(key, fromScore, toScore, null);
+
+    public async Task<string?> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore, IDatabaseContext? context = null)
     {
-        var result = await GetFirstByLowestScoreAsync(key, fromScore, toScore, 1);
+        var result = await GetFirstByLowestScoreAsync(key, fromScore, toScore, 1, context);
         return result.FirstOrDefault();
     }
 
-    public async Task<List<string>> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore, int count)
+    public Task<List<string>> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore, int count)
+        => GetFirstByLowestScoreAsync(key, fromScore, toScore, count, null);
+
+    public async Task<List<string>> GetFirstByLowestScoreAsync(string key, double fromScore, double toScore, int count, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendAnd();
@@ -33,22 +43,28 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
         sc.AppendAnd();
         sc.AppendName("s.Score").AppendQuery(" <= ").AppendParam(sc.AddParameterWithValue("toScore", DbType.Double, toScore));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Score").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, count);
+        ctx.Dialect.AppendPaging(sc.Query, 0, count);
         var sets = await LoadListAsync(sc);
         return sets.Select(s => s.Value).ToList()!;
     }
 
-    public async Task<long> GetCountAsync(string key)
+    public Task<long> GetCountAsync(string key) => GetCountAsync(key, null);
+
+    public async Task<long> GetCountAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT COUNT(*) FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         return await sc.ExecuteScalarRequiredAsync<long>();
     }
 
-    public async Task<bool> ContainsAsync(string key, string value)
+    public Task<bool> ContainsAsync(string key, string value) => ContainsAsync(key, value, null);
+
+    public async Task<bool> ContainsAsync(string key, string value, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT COUNT(*) FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendAnd();
@@ -56,20 +72,26 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
         return await sc.ExecuteScalarRequiredAsync<long>() > 0;
     }
 
-    public async Task<List<string>> GetRangeAsync(string key, int from, int to)
+    public Task<List<string>> GetRangeAsync(string key, int from, int to) => GetRangeAsync(key, from, to, null);
+
+    public async Task<List<string>> GetRangeAsync(string key, int from, int to, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Score").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, from, to - from + 1);
+        ctx.Dialect.AppendPaging(sc.Query, from, to - from + 1);
         var sets = await LoadListAsync(sc);
         return sets.Select(s => s.Value).ToList()!;
     }
 
-    public async Task<TimeSpan> GetTtlAsync(string key)
+    public Task<TimeSpan> GetTtlAsync(string key) => GetTtlAsync(key, null);
+
+    public async Task<TimeSpan> GetTtlAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT MIN(").AppendName("ExpireAt").AppendQuery(") FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         var result = await sc.ExecuteScalarOrNullAsync<DateTime?>();
@@ -85,7 +107,8 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
 
     public async Task<int> UpdateExpireAtAsync(string key, DateTime? expireAt, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("ExpireAt").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("expireAt", DbType.DateTime, expireAt as object ?? DBNull.Value));
@@ -96,19 +119,23 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
 
     public async Task<int> DeleteByKeyAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("DELETE FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<int> DeleteExpiredAsync(int batchSize)
+    public Task<int> DeleteExpiredAsync(int batchSize) => DeleteExpiredAsync(batchSize, null);
+
+    public async Task<int> DeleteExpiredAsync(int batchSize, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("s");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
         sc.AppendName("s.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Key").AppendQuery(", ").AppendName("s.Value").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);
         if (expired.Count == 0)
         {

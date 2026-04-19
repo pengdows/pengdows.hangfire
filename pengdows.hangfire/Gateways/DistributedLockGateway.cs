@@ -9,14 +9,8 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord, string>, IDistributedLockGateway
 {
-    // Release template: DELETE FROM hf_lock WHERE resource = @k0 AND owner_id = @ownerId
-    // Built once from TableGateway.BuildDelete (reuses its cached PK clause) + appended owner guard.
-    // Clone() per call; only string params so no dialect DateTime-conversion concern.
-    private readonly ISqlContainer _releaseTemplate;
-
     public DistributedLockGateway(IDatabaseContext context) : base(context)
     {
-        _releaseTemplate = BuildReleaseTemplate();
     }
 
     // ── Acquire path ─────────────────────────────────────────────────────────
@@ -37,11 +31,15 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     //
     // Returns true when the row was inserted or stolen; false when the lock is actively held.
 
+    public Task<bool> TryAcquireAsync(string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        => TryAcquireAsync(resource, ownerId, expiresAt, asOf, null);
+
     public async Task<bool> TryAcquireAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext? context = null)
     {
-        var dsi     = Context.DataSourceInfo;
-        var dialect = Context.Dialect;
+        var ctx = context ?? Context;
+        var dsi     = ctx.DataSourceInfo;
+        var dialect = ctx.Dialect;
 
         // PostgreSQL's MERGE is not safe under concurrent inserts — two sessions can both
         // see WHEN NOT MATCHED and race to INSERT, producing a unique constraint violation.
@@ -55,7 +53,7 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
 
         if (dsi.SupportsMerge && !isPostgres && !isFirebird)
         {
-            return await TryAcquireMergeAsync(resource, ownerId, expiresAt, asOf);
+            return await TryAcquireMergeAsync(resource, ownerId, expiresAt, asOf, ctx);
         }
 
         if (dsi.SupportsInsertOnConflict)
@@ -63,15 +61,15 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
             if (dialect.SupportsOnConflictWhere)
             {
                 // PostgreSQL < 15, CockroachDB: ON CONFLICT DO UPDATE WHERE.
-                return await TryAcquireOnConflictWhereAsync(resource, ownerId, expiresAt, asOf);
+                return await TryAcquireOnConflictWhereAsync(resource, ownerId, expiresAt, asOf, ctx);
             }
 
             // SQLite / DuckDB < 1.4: no WHERE predicate on ON CONFLICT DO UPDATE.
-            return await TryAcquireTwoPhaseAsync(resource, ownerId, expiresAt, asOf);
+            return await TryAcquireTwoPhaseAsync(resource, ownerId, expiresAt, asOf, ctx);
         }
 
         // MySQL / unknown: INSERT-first with exception catch.
-        return await TryAcquireInsertFirstAsync(resource, ownerId, expiresAt, asOf);
+        return await TryAcquireInsertFirstAsync(resource, ownerId, expiresAt, asOf, ctx);
     }
 
     // ── SQL Server / Oracle / Firebird / DuckDB 1.4+ / PostgreSQL 15+ — MERGE ─
@@ -83,11 +81,11 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     //   SQL Server — standard AS aliases; no FROM needed; HOLDLOCK hint appended to target.
 
     private async Task<bool> TryAcquireMergeAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext ctx)
     {
-        await using var sc = Context.CreateSqlContainer();
-        var dialect = Context.Dialect;
-        var product = Context.DataSourceInfo.Product;
+        await using var sc = ctx.CreateSqlContainer();
+        var dialect = ctx.Dialect;
+        var product = ctx.DataSourceInfo.Product;
 
         // tp: prepended to column names in SET clause that must reference the target row.
         var tp = dialect.MergeUpdateRequiresTargetAlias ? "t." : "";
@@ -165,10 +163,10 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     // ── PostgreSQL < 15 / CockroachDB — ON CONFLICT DO UPDATE WHERE ───────────
 
     private async Task<bool> TryAcquireOnConflictWhereAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext ctx)
     {
-        await using var sc = Context.CreateSqlContainer();
-        var dialect  = Context.Dialect;
+        await using var sc = ctx.CreateSqlContainer();
+        var dialect  = ctx.Dialect;
         var incoming = dialect.UpsertIncomingColumn;
 
         var wResource  = dialect.WrapSimpleName("resource");
@@ -197,17 +195,17 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     // ── SQLite / DuckDB < 1.4 — two-phase UPDATE then INSERT ON CONFLICT DO NOTHING
 
     private async Task<bool> TryAcquireTwoPhaseAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext ctx)
     {
         // Phase 1: steal an expired row atomically.
-        if (await TryUpdateExpiredAsync(resource, ownerId, expiresAt, asOf))
+        if (await TryUpdateExpiredAsync(resource, ownerId, expiresAt, asOf, ctx))
         {
             return true;
         }
 
         // Phase 2: try to insert a new row; ignore if another writer just inserted it.
-        await using var sc = Context.CreateSqlContainer();
-        var dialect = Context.Dialect;
+        await using var sc = ctx.CreateSqlContainer();
+        var dialect = ctx.Dialect;
 
         var wResource  = dialect.WrapSimpleName("resource");
         var wOwnerId   = dialect.WrapSimpleName("owner_id");
@@ -229,7 +227,7 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     // ── MySQL / unknown fallback — INSERT-first with exception ────────────────
 
     private async Task<bool> TryAcquireInsertFirstAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext ctx)
     {
         var record = new DistributedLockRecord
         {
@@ -241,21 +239,21 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
 
         try
         {
-            await CreateAsync(record);
+            await CreateAsync(record, ctx);
             return true;
         }
         catch (UniqueConstraintViolationException)
         {
-            return await TryUpdateExpiredAsync(resource, ownerId, expiresAt, asOf);
+            return await TryUpdateExpiredAsync(resource, ownerId, expiresAt, asOf, ctx);
         }
     }
 
     // ── Shared steal helper ───────────────────────────────────────────────────
 
     private async Task<bool> TryUpdateExpiredAsync(
-        string resource, string ownerId, DateTime expiresAt, DateTime asOf)
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext ctx)
     {
-        await using var sc = Context.CreateSqlContainer();
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("owner_id").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("ownerId", DbType.String, ownerId));
@@ -274,10 +272,14 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
 
     // ── Renew ─────────────────────────────────────────────────────────────────
 
+    public Task<bool> TryRenewAsync(string resource, string ownerId, int expectedVersion, DateTime newExpiresAt)
+        => TryRenewAsync(resource, ownerId, expectedVersion, newExpiresAt, null);
+
     public async Task<bool> TryRenewAsync(
-        string resource, string ownerId, int expectedVersion, DateTime newExpiresAt)
+        string resource, string ownerId, int expectedVersion, DateTime newExpiresAt, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("expires_at").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("newExpires", DbType.DateTime, newExpiresAt));
@@ -295,21 +297,22 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
 
     // ── Release ───────────────────────────────────────────────────────────────
 
-    public async Task ReleaseAsync(string resource, string ownerId)
+    public Task ReleaseAsync(string resource, string ownerId) => ReleaseAsync(resource, ownerId, null);
+
+    public async Task ReleaseAsync(string resource, string ownerId, IDatabaseContext? context = null)
     {
-        await using var sc = _releaseTemplate.Clone();
-        sc.SetParameterValue("k0",     resource);
-        sc.SetParameterValue("ownerId", ownerId);
+        var ctx = context ?? Context;
+        await using var sc = BuildReleaseTemplate(resource, ownerId, ctx);
         await sc.ExecuteNonQueryAsync();
     }
 
     // ── Template builders ─────────────────────────────────────────────────────
 
-    private ISqlContainer BuildReleaseTemplate()
+    private ISqlContainer BuildReleaseTemplate(string resource, string ownerId, IDatabaseContext context)
     {
-        var sc = BuildDelete(string.Empty);
+        var sc = BuildDelete(resource, context);
         sc.AppendAnd().AppendName("owner_id").AppendEquals()
-          .AppendParam(sc.AddParameterWithValue("ownerId", DbType.String, string.Empty));
+          .AppendParam(sc.AddParameterWithValue("ownerId", DbType.String, ownerId));
         return sc;
     }
 }

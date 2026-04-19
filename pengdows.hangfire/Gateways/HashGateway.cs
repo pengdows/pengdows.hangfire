@@ -8,18 +8,24 @@ public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
 {
     public HashGateway(IDatabaseContext context) : base(context) { }
 
-    public async Task<Dictionary<string, string>> GetAllEntriesAsync(string key)
+    public Task<Dictionary<string, string>> GetAllEntriesAsync(string key) => GetAllEntriesAsync(key, null);
+
+    public async Task<Dictionary<string, string>> GetAllEntriesAsync(string key, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("h");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("h", ctx);
         sc.AppendWhere();
         sc.AppendName("h.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         var hashes = await LoadListAsync(sc);
         return hashes.ToDictionary(h => h.Field, h => h.Value ?? string.Empty);
     }
 
-    public async Task<string?> GetValueAsync(string key, string field)
+    public Task<string?> GetValueAsync(string key, string field) => GetValueAsync(key, field, null);
+
+    public async Task<string?> GetValueAsync(string key, string field, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("h");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("h", ctx);
         sc.AppendWhere();
         sc.AppendName("h.Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         sc.AppendAnd();
@@ -28,17 +34,23 @@ public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
         return hash?.Value;
     }
 
-    public async Task<long> GetCountAsync(string key)
+    public Task<long> GetCountAsync(string key) => GetCountAsync(key, null);
+
+    public async Task<long> GetCountAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT COUNT(*) FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         return await sc.ExecuteScalarRequiredAsync<long>();
     }
 
-    public async Task<TimeSpan> GetTtlAsync(string key)
+    public Task<TimeSpan> GetTtlAsync(string key) => GetTtlAsync(key, null);
+
+    public async Task<TimeSpan> GetTtlAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT MIN(").AppendName("ExpireAt").AppendQuery(") FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         var result = await sc.ExecuteScalarOrNullAsync<DateTime?>();
@@ -54,7 +66,8 @@ public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
 
     public async Task DeleteAllForKeyAsync(string key, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("DELETE FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("Key").AppendEquals().AppendParam(sc.AddParameterWithValue("key", DbType.String, key));
         await sc.ExecuteNonQueryAsync();
@@ -62,7 +75,8 @@ public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
 
     public async Task<int> UpdateExpireAtAsync(string key, DateTime? expireAt, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("ExpireAt").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("expireAt", DbType.DateTime, expireAt as object ?? DBNull.Value));
@@ -71,13 +85,16 @@ public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<int> DeleteExpiredAsync(int batchSize)
+    public Task<int> DeleteExpiredAsync(int batchSize) => DeleteExpiredAsync(batchSize, null);
+
+    public async Task<int> DeleteExpiredAsync(int batchSize, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("h");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("h", ctx);
         sc.AppendWhere();
         sc.AppendName("h.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
         sc.AppendQuery(" ORDER BY ").AppendName("h.Key").AppendQuery(", ").AppendName("h.Field").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);
         if (expired.Count == 0)
         {

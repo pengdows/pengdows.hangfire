@@ -12,9 +12,12 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
 {
     public JobQueueGateway(IDatabaseContext context) : base(context) { }
 
-    public async Task<int> AcknowledgeAsync(long jobId, string queue)
+    public Task<int> AcknowledgeAsync(long jobId, string queue) => AcknowledgeAsync(jobId, queue, null);
+
+    public async Task<int> AcknowledgeAsync(long jobId, string queue, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("DELETE FROM ").AppendQuery(WrappedTableName).AppendWhere();
         sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendAnd().AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
@@ -22,9 +25,12 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<int> RequeueAsync(long jobId, string queue)
+    public Task<int> RequeueAsync(long jobId, string queue) => RequeueAsync(jobId, queue, null);
+
+    public async Task<int> RequeueAsync(long jobId, string queue, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendQuery(" = NULL WHERE ");
         sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
@@ -33,9 +39,12 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<int> RequeueStaleAsync(DateTime cutoff)
+    public Task<int> RequeueStaleAsync(DateTime cutoff) => RequeueStaleAsync(cutoff, null);
+
+    public async Task<int> RequeueStaleAsync(DateTime cutoff, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendQuery(" = NULL");
         sc.AppendWhere();
@@ -45,9 +54,12 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<string>> GetDistinctQueuesAsync()
+    public Task<List<string>> GetDistinctQueuesAsync() => GetDistinctQueuesAsync(null);
+
+    public async Task<List<string>> GetDistinctQueuesAsync(IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("SELECT DISTINCT ").AppendName("Queue").AppendQuery(" FROM ").AppendQuery(WrappedTableName);
         await using var reader = await sc.ExecuteReaderAsync();
         var queues = new List<string>();
@@ -58,26 +70,34 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return queues;
     }
 
-    public async Task<List<JobQueue>> GetPagedByQueueAsync(string queue, int from, int count, bool fetched)
+    public Task<List<JobQueue>> GetPagedByQueueAsync(string queue, int from, int count, bool fetched)
+        => GetPagedByQueueAsync(queue, from, count, fetched, null);
+
+    public async Task<List<JobQueue>> GetPagedByQueueAsync(string queue, int from, int count, bool fetched, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("q");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("q", ctx);
         sc.AppendWhere();
         sc.AppendName("q.Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
         sc.AppendAnd().AppendName("q.FetchedAt").AppendQuery(fetched ? " IS NOT NULL" : " IS NULL");
         sc.AppendQuery(" ORDER BY ").AppendName("q.Id").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, from, count);
+        ctx.Dialect.AppendPaging(sc.Query, from, count);
         return await LoadListAsync(sc);
     }
 
-    public async Task<(long JobId, string Queue)?> FetchNextJobAsync(string[] queues, CancellationToken ct)
+    public Task<(long JobId, string Queue)?> FetchNextJobAsync(string[] queues, CancellationToken ct)
+        => FetchNextJobAsync(queues, ct, null);
+
+    public async Task<(long JobId, string Queue)?> FetchNextJobAsync(string[] queues, CancellationToken ct, IDatabaseContext? context = null)
     {
+        var ctx = context ?? Context;
         foreach (var queue in queues)
         {
             ct.ThrowIfCancellationRequested();
 
             // Stream candidates lazily — no LIMIT, no allocation into a list.
             // The FetchedAt IS NULL guard in TryClaimAsync is the correctness gate.
-            await using var sc = Context.CreateSqlContainer();
+            await using var sc = ctx.CreateSqlContainer();
             sc.AppendQuery("SELECT ")
                 .AppendName("Id").AppendComma()
                 .AppendName("JobId")
@@ -92,7 +112,7 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
                 ct.ThrowIfCancellationRequested();
                 var id    = reader.GetInt64(0);
                 var jobId = reader.GetInt64(1);
-                if (await TryClaimAsync(id, queue, ct))
+                if (await TryClaimAsync(id, queue, ct, ctx))
                 {
                     return (jobId, queue);
                 }
@@ -102,9 +122,10 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return null;
     }
 
-    private async Task<bool> TryClaimAsync(long id, string queue, CancellationToken ct)
+    private async Task<bool> TryClaimAsync(long id, string queue, CancellationToken ct, IDatabaseContext? context = null)
     {
-        await using var sc = Context.CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendEquals()
             .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
