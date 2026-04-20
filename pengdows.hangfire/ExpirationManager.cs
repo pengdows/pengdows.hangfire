@@ -23,6 +23,12 @@ public sealed class ExpirationManager : IBackgroundProcess
 
     public void Execute(BackgroundProcessContext context)
     {
+        RunOnce();
+        context.Wait(_checkInterval);
+    }
+
+    internal void RunOnce()
+    {
         try
         {
             using var distributedLock = new PengdowsCrudDistributedLock(_storage, DistributedLockKey, DefaultLockTimeout);
@@ -41,8 +47,6 @@ public sealed class ExpirationManager : IBackgroundProcess
                 () => $"Could not acquire lock on '{DistributedLockKey}' within {DefaultLockTimeout.TotalSeconds}s. Another server handled expiration.",
                 e);
         }
-
-        context.Wait(_checkInterval);
     }
 
     private void DeleteExpiredRows(string table, Func<int> deleteAction)

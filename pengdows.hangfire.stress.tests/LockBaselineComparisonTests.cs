@@ -112,8 +112,7 @@ public sealed class LockBaselineComparisonTests
     {
         var resource      = "cmp-burst-" + Guid.NewGuid().ToString("N");
         var tracker       = new OwnershipTracker();
-        var modeLatencies = ModeLatencyBags();
-        var retryCounts   = new ConcurrentBag<int>();
+        var latencies     = new ConcurrentBag<long>();
         long totalDbCalls = 0;
         long acquired = 0, timeouts = 0;
         var startGate = new ManualResetEventSlim(false);
@@ -126,19 +125,12 @@ public sealed class LockBaselineComparisonTests
             {
                 using var lk = acquireLock(resource, TimeSpan.FromSeconds(90));
                 var elapsed = sw.ElapsedMilliseconds;
+                latencies.Add(elapsed);
 
-                // Extract internal metrics when the lock is ours.
-                if (lk is PengdowsCrudDistributedLock ours)
+                // Count one UPSERT DB call per acquire for our implementation.
+                if (lk is PengdowsCrudDistributedLock)
                 {
-                    modeLatencies[ours.HowAcquired].Add(elapsed);
-                    retryCounts.Add(ours.AcquireRetryCount);
-                    var dbCalls = ours.AcquireRetryCount * 2L
-                        + (ours.HowAcquired == AcquireMode.TtlSteal ? 2 : 1);
-                    Interlocked.Add(ref totalDbCalls, dbCalls);
-                }
-                else
-                {
-                    modeLatencies[AcquireMode.InsertWin].Add(elapsed); // bucket stock into fast path
+                    Interlocked.Add(ref totalDbCalls, 1);
                 }
 
                 var tid     = Guid.NewGuid().ToString("N");
@@ -163,10 +155,10 @@ public sealed class LockBaselineComparisonTests
             $"[{label}] MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
         Assert.Equal(0, timeouts);
 
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies = latencies.OrderBy(x => x).ToList();
         _out.WriteLine($"[{label}] burst workers={workerCount}  acquired={acquired}  timeouts={timeouts}  violations={tracker.Violations}  maxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
         _out.WriteLine($"[{label}] acquire-latency ms  p50={Pct(allLatencies,50)}  p95={Pct(allLatencies,95)}  p99={Pct(allLatencies,99)}  max={allLatencies.LastOrDefault()}");
-        EmitOurMetrics(label, totalDbCalls, durationMs: null, modeLatencies, retryCounts);
+        EmitOurMetrics(label, totalDbCalls, durationMs: null);
     }
 
     private async Task RunSustainedScenario(
@@ -177,8 +169,7 @@ public sealed class LockBaselineComparisonTests
     {
         var resource      = "cmp-sust-" + Guid.NewGuid().ToString("N");
         var tracker       = new OwnershipTracker();
-        var modeLatencies = ModeLatencyBags();
-        var retryCounts   = new ConcurrentBag<int>();
+        var latencies     = new ConcurrentBag<long>();
         long totalDbCalls = 0;
         long acquires = 0, timeouts = 0;
         var cts = new CancellationTokenSource(durationMs);
@@ -192,18 +183,11 @@ public sealed class LockBaselineComparisonTests
                 {
                     using var lk = acquireLock(resource, TimeSpan.FromSeconds(15));
                     var elapsed = sw.ElapsedMilliseconds;
+                    latencies.Add(elapsed);
 
-                    if (lk is PengdowsCrudDistributedLock ours)
+                    if (lk is PengdowsCrudDistributedLock)
                     {
-                        modeLatencies[ours.HowAcquired].Add(elapsed);
-                        retryCounts.Add(ours.AcquireRetryCount);
-                        var dbCalls = ours.AcquireRetryCount * 2L
-                        + (ours.HowAcquired == AcquireMode.TtlSteal ? 2 : 1);
-                    Interlocked.Add(ref totalDbCalls, dbCalls);
-                    }
-                    else
-                    {
-                        modeLatencies[AcquireMode.InsertWin].Add(elapsed);
+                        Interlocked.Add(ref totalDbCalls, 1);
                     }
 
                     var tid     = Guid.NewGuid().ToString("N");
@@ -227,16 +211,13 @@ public sealed class LockBaselineComparisonTests
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"[{label}] MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
         _out.WriteLine($"[{label}] sustained({durationMs / 1000}s): {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
         _out.WriteLine($"[{label}] acquire-latency ms  p50={Pct(allLatencies,50)}  p95={Pct(allLatencies,95)}  p99={Pct(allLatencies,99)}  max={allLatencies.LastOrDefault()}");
         _out.WriteLine($"[{label}] violations={tracker.Violations}  overlaps={tracker.CountIntervalOverlaps()}  maxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
-        EmitOurMetrics(label, totalDbCalls, durationMs, modeLatencies, retryCounts);
+        EmitOurMetrics(label, totalDbCalls, durationMs);
     }
-
-    private static Dictionary<AcquireMode, ConcurrentBag<long>> ModeLatencyBags() =>
-        Enum.GetValues<AcquireMode>().ToDictionary(m => m, _ => new ConcurrentBag<long>());
 
     private static long Pct(List<long> sorted, int p)
     {
@@ -253,15 +234,9 @@ public sealed class LockBaselineComparisonTests
     }
 
     /// <summary>
-    /// Emits the pengdows.crud-specific internal metrics when the lock under
-    /// test is ours.  Silently skips for the stock implementation (no data).
+    /// Emits db-call count for our implementation; skips for stock (no data).
     /// </summary>
-    private void EmitOurMetrics(
-        string label,
-        long   totalDbCalls,
-        int?   durationMs,
-        Dictionary<AcquireMode, ConcurrentBag<long>> modeLatencies,
-        ConcurrentBag<int> retryCounts)
+    private void EmitOurMetrics(string label, long totalDbCalls, int? durationMs)
     {
         if (totalDbCalls == 0)
         {
@@ -278,25 +253,10 @@ public sealed class LockBaselineComparisonTests
             _out.WriteLine($"[{label}] db calls = {totalDbCalls}");
         }
 
-        // Print the full metrics grid if we're using pengdows.crud
         var monitor = _f.Storage.GetMonitoringApi() as PengdowsCrudMonitoringApi;
         if (monitor != null)
         {
             _out.WriteLine(monitor.GetDatabaseMetricGrid());
-        }
-
-        _out.WriteLine($"[{label}] AcquireMode breakdown:");
-        foreach (var mode in Enum.GetValues<AcquireMode>())
-        {
-            var sorted = modeLatencies[mode].OrderBy(x => x).ToList();
-            if (sorted.Count == 0) continue;
-            _out.WriteLine($"[{label}]   {mode,-14} n={sorted.Count,-5}  p50={Pct(sorted,50),-7}  p95={Pct(sorted,95),-7}  p99={Pct(sorted,99),-7}  max={sorted.Last()}");
-        }
-
-        if (!retryCounts.IsEmpty)
-        {
-            var rs = retryCounts.OrderBy(x => x).ToList();
-            _out.WriteLine($"[{label}]   retries        avg={rs.Average(),-5:F1}  p50={Pct(rs,50),-7}  p95={Pct(rs,95),-7}  p99={Pct(rs,99),-7}  max={rs.Last()}");
         }
     }
 

@@ -475,6 +475,34 @@ public sealed class TransactionTests
         Assert.True(factory.CreatedConnections.Any());
     }
 
+    // ── CommitAsync rollback-on-throw ─────────────────────────────────────────
+
+    [Fact]
+    public void CommitAsync_WhenCommitThrows_RollsBackAndRethrows()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        var throwingConn = new fakeDbConnection();
+        throwingConn.SetTransactionCommitException(new InvalidOperationException("forced commit failure"));
+        factory.Connections.Insert(0, throwingConn);
+        var storage = new PengdowsCrudJobStorage(ctx);
+        using var tx = new PengdowsCrudWriteOnlyTransaction(storage);
+        tx.IncrementCounter("k");
+        Assert.Throws<InvalidOperationException>(() => tx.Commit());
+    }
+
+    // ── AddJobState invalid ID short-circuit ──────────────────────────────────
+
+    [Fact]
+    public void AddJobState_InvalidJobId_IsNoOp()
+    {
+        var (storage, factory) = CreateStorage();
+        using var tx = new PengdowsCrudWriteOnlyTransaction(storage);
+        tx.AddJobState("not-a-number", new SucceededState(null, 1, 100));
+        tx.Commit();
+        Assert.False(NonQueryContains(factory, "UPDATE") || NonQueryContains(factory, "INSERT") || NonQueryContains(factory, "DELETE"));
+    }
+
     private sealed class FakeFetchedJob : IFetchedJob
     {
         public string JobId => "0";

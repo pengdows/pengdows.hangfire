@@ -37,10 +37,6 @@ public sealed class PengdowsCrudMonitoringApi : IHangfireMonitor
             metrics[name] = ctx.Metrics;
         }
 
-        // We could support ITenantContextRegistry here if it exposed active contexts.
-        // Since it doesn't, we recommend users add tenant contexts to AdditionalMetricsContexts
-        // if they want them in the Hangfire dashboard, or we could implement an observer in the future.
-
         return metrics;
     }
 

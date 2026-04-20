@@ -70,30 +70,28 @@ IDatabaseContext databaseContext = new DatabaseContext(
 GlobalConfiguration.Configuration
     .UsePengdowsCrudStorage(databaseContext, options =>
     {
-        options.SchemaName = "hangfire";
         options.AutoPrepareSchema = true;
         options.QueuePollInterval = TimeSpan.FromSeconds(5);
     });
 ```
 
 `AutoPrepareSchema = true` (the default) creates all required tables on first run. Set it to `false` if you manage schema migrations yourself.
+On schema-capable databases, `pengdows.hangfire` always uses the built-in `HangFire` schema. Custom schema names are not supported.
 
 ## Configuration
 
 All options are set via `PengdowsCrudStorageOptions`:
 
-| Option                       | Default    | Description                                                         |
-|------------------------------|------------|---------------------------------------------------------------------|
-| `SchemaName`                 | `hangfire` | Database schema to place all Hangfire tables in                     |
-| `AutoPrepareSchema`          | `true`     | Create schema tables on initialization if they do not exist         |
-| `QueuePollInterval`          | 5 sec      | How long a worker waits between queue polls when idle               |
-| `InvisibilityTimeout`        | 5 min      | How long a fetched job is invisible to other workers before requeue |
-| `ServerHeartbeatInterval`    | 30 sec     | How often servers write a heartbeat to the `Server` table           |
-| `JobExpirationCheckInterval` | 30 min     | How often the expiration manager purges expired jobs                |
-| `CountersAggregateInterval`  | 5 min      | How often fine-grained counters are rolled up into aggregates       |
-| `DistributedLockTtl`         | 5 min      | How long a distributed lock row lives before it can be force-taken  |
-| `DistributedLockRetryDelay`  | 50 ms      | Base sleep between distributed lock acquire attempts                |
-| `DistributedLockRetryJitter` | `true`     | Randomize retry sleep to prevent thundering-herd on lock contention |
+| Option                        | Default    | Description                                                         |
+|-------------------------------|------------|---------------------------------------------------------------------|
+| `SchemaName`                  | `hangfire` | Obsolete and ignored. Custom database schemas are not supported     |
+| `AutoPrepareSchema`           | `true`     | Create schema tables on initialization if they do not exist         |
+| `QueuePollInterval`           | 5 sec      | How long a worker waits between queue polls when idle               |
+| `QueuePollJitter`             | `true`     | Randomize poll sleep to prevent thundering-herd on idle queues      |
+| `JobExpirationCheckInterval`  | 30 min     | How often the expiration manager purges expired jobs                |
+| `CountersAggregateInterval`   | 5 min      | How often fine-grained counters are rolled up into aggregates       |
+| `DistributedLockTtl`          | 5 min      | How long a distributed lock row lives before it can be force-taken  |
+| `AdditionalMetricsContexts`   | `[]`       | Extra database contexts to include in the Hangfire dashboard metrics |
 
 ## Architecture
 
@@ -127,7 +125,7 @@ The schema is versioned. Running against an existing schema applies only the mis
 
 ### Running Liquibase Migrations
 
-The changelog entry point is `Liquibase/changelog-master.xml`. The schema name defaults to `HangFire` and can be overridden via the `schemaName` parameter.
+The changelog entry point is `Liquibase/changelog-master.xml`. The migrations target the built-in `HangFire` schema. Override parameters are not supported by the runtime storage and should not be used for deployed schemas.
 
 #### Liquibase CLI (standalone)
 
@@ -141,7 +139,6 @@ liquibase \
   --url="jdbc:postgresql://localhost:5432/myapp" \
   --username=myuser \
   --password=mypassword \
-  --parameter.schemaName=HangFire \
   update
 ```
 

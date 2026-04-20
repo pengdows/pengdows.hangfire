@@ -21,6 +21,7 @@
   <ItemGroup>
     <PackageReference Include="Hangfire.Core" Version="1.8.23" />
     <PackageReference Include="pengdows.crud" Version="2.0.3" />
+    <PackageReference Include="pengdows.crud.analyzers" Version="2.0.5" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,6 +35,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>pengdows.hangfire.tests</_Parameter1>
+    </AssemblyAttribute>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>pengdows.hangfire.integration.tests</_Parameter1>
     </AssemblyAttribute>

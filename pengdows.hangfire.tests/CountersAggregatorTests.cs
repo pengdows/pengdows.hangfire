@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Hangfire.Server;
 using pengdows.crud;
 using pengdows.crud.enums;
@@ -17,8 +19,11 @@ public sealed class CountersAggregatorTests
         return (new PengdowsCrudJobStorage(ctx), factory);
     }
 
+    private static BackgroundProcessContext CreateProcessContext(PengdowsCrudJobStorage storage, CancellationToken stoppingToken = default)
+        => new("server-1", storage, new Dictionary<string, object>(), Guid.NewGuid(), stoppingToken, CancellationToken.None, CancellationToken.None);
+
     [Fact]
-    public void Execute_IssuesAggregateCalls()
+    public void RunOnce_IssuesAggregateCalls()
     {
         var (storage, factory) = CreateStorage();
         var aggregator = new CountersAggregator(storage, TimeSpan.FromMinutes(1));
@@ -35,23 +40,13 @@ public sealed class CountersAggregatorTests
         
         factory.EnqueueReaderResult(new[] { row });
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
-
-        aggregator.Execute(context);
+        aggregator.RunOnce();
 
         Assert.True(factory.CreatedConnections.Any());
     }
 
     [Fact]
-    public void Execute_LoopsWhenBatchSizeReached()
+    public void RunOnce_LoopsWhenBatchSizeReached()
     {
         var (storage, factory) = CreateStorage();
         var aggregator = new CountersAggregator(storage, TimeSpan.FromMinutes(1));
@@ -67,17 +62,7 @@ public sealed class CountersAggregatorTests
         // Pass 2: return 0 rows
         factory.EnqueueReaderResult(Array.Empty<System.Collections.Generic.Dictionary<string, object>>());
 
-        using var cts = new System.Threading.CancellationTokenSource();
-        var context = new BackgroundProcessContext(
-            "serverId",
-            storage,
-            new System.Collections.Generic.Dictionary<string, object>(),
-            Guid.Empty,
-            cts.Token,
-            System.Threading.CancellationToken.None,
-            System.Threading.CancellationToken.None);
-
-        aggregator.Execute(context);
+        aggregator.RunOnce();
 
         Assert.True(factory.CreatedConnections.Count >= 2);
     }
@@ -87,5 +72,26 @@ public sealed class CountersAggregatorTests
     {
         Assert.Throws<ArgumentNullException>(() =>
             new CountersAggregator(null!, TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public void Execute_WaitsBetweenFullBatchPasses_AndForInterval()
+    {
+        var (storage, factory) = CreateStorage();
+        var aggregator = new CountersAggregator(storage, TimeSpan.Zero);
+
+        var batch = Enumerable.Range(1, 1000).Select(i => new Dictionary<string, object>
+        {
+            ["Id"] = (long)i,
+            ["Key"] = "k",
+            ["Value"] = 1
+        }).ToList();
+        factory.EnqueueReaderResult(batch);
+        factory.EnqueueReaderResult(Array.Empty<Dictionary<string, object>>());
+
+        var context = CreateProcessContext(storage);
+        aggregator.Execute(context);
+
+        Assert.True(factory.CreatedConnections.Count >= 2);
     }
 }

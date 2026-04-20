@@ -1,4 +1,6 @@
 using System;
+using System.Reflection;
+using System.Threading.Tasks;
 using Hangfire.Storage;
 using pengdows.crud;
 using pengdows.crud.enums;
@@ -18,12 +20,10 @@ public sealed class DistributedLockTests
     }
 
     [Fact]
-    public void Constructor_AcquiresLock_InsertWinMode()
+    public void Constructor_AcquiresLock_Successfully()
     {
         var (storage, _) = CreateStorage();
         using var lk = new PengdowsCrudDistributedLock(storage, "test-resource", TimeSpan.FromSeconds(30));
-        Assert.Equal(AcquireMode.InsertWin, lk.HowAcquired);
-        Assert.Equal(0, lk.AcquireRetryCount);
         Assert.False(lk.LeaseLost);
     }
 
@@ -68,119 +68,131 @@ public sealed class DistributedLockTests
     }
 
     [Fact]
-    public void AcquireSleepMs_ZeroOnFirstAcquire()
-    {
-        var (storage, _) = CreateStorage();
-        using var lk = new PengdowsCrudDistributedLock(storage, "res-sleep", TimeSpan.FromSeconds(30));
-        Assert.Equal(0L, lk.AcquireSleepMs);
-    }
-
-    [Fact]
-    public void Constructor_WithJitterDisabled_AcquiresLock()
-    {
-        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
-        var ctx     = new DatabaseContext("Data Source=fake", factory);
-        var opts    = new PengdowsCrudStorageOptions { DistributedLockRetryJitter = false };
-        var storage = new PengdowsCrudJobStorage(ctx, opts);
-        using var lk = new PengdowsCrudDistributedLock(storage, "res-nojitter", TimeSpan.FromSeconds(30));
-        Assert.Equal(AcquireMode.InsertWin, lk.HowAcquired);
-    }
-
-    [Fact]
-    public void Constructor_WhenInsertConflictsAndLockStealSucceeds_AcquiresTtlSteal()
+    public void Constructor_WhenUpsertReturnsZero_ThrowsTimeout()
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx     = new DatabaseContext("Data Source=fake", factory);
         var storage = new PengdowsCrudJobStorage(ctx);
 
-        // conn2: UPDATE (TryUpdateExpiredAsync) returns 1 → stolen=true
-        var conn2 = new fakeDbConnection();
-        conn2.NonQueryResults.Enqueue(1);
-        factory.Connections.Insert(0, conn2);
+        // Seed a connection that returns 0 from ExecuteNonQueryAsync (UPSERT acquired 0 rows — lock held)
+        var conn = new fakeDbConnection();
+        conn.NonQueryResults.Enqueue(0);
+        factory.Connections.Insert(0, conn);
 
-        // conn1: INSERT (CreateAsync) throws UniqueConstraintViolationException
-        var conn1 = new fakeDbConnection();
-        conn1.SetNonQueryExecuteException(
-            new UniqueConstraintViolationException("dup", SupportedDatabase.SqlServer));
-        factory.Connections.Insert(0, conn1);
-
-        using var lk = new PengdowsCrudDistributedLock(storage, "res-steal", TimeSpan.FromSeconds(30));
-        Assert.Equal(AcquireMode.TtlSteal, lk.HowAcquired);
-    }
-
-    [Fact]
-    public void Constructor_WhenInsertConflictsAndNoExpiredLock_ThrowsTimeout()
-    {
-        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
-        var ctx     = new DatabaseContext("Data Source=fake", factory);
-        var opts    = new PengdowsCrudStorageOptions { DistributedLockRetryDelay = TimeSpan.FromMilliseconds(1) };
-        var storage = new PengdowsCrudJobStorage(ctx, opts);
-
-        // conn2: UPDATE returns 0 → stolen=false → (null, false)
-        var conn2 = new fakeDbConnection();
-        conn2.NonQueryResults.Enqueue(0);
-        factory.Connections.Insert(0, conn2);
-
-        // conn1: INSERT throws UniqueConstraintViolationException
-        var conn1 = new fakeDbConnection();
-        conn1.SetNonQueryExecuteException(
-            new UniqueConstraintViolationException("dup", SupportedDatabase.SqlServer));
-        factory.Connections.Insert(0, conn1);
-
-        // timeout=Zero → deadline is already in the past → DistributedLockTimeoutException
         Assert.Throws<DistributedLockTimeoutException>(() =>
             new PengdowsCrudDistributedLock(storage, "res-timeout", TimeSpan.Zero));
     }
 
     [Fact]
-    public void Constructor_WhenInsertConflictsThenRetrySucceeds_AcquiresFollowRelease()
+    public void Constructor_WhenUpsertReturnsOne_Succeeds()
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx     = new DatabaseContext("Data Source=fake", factory);
-        var opts    = new PengdowsCrudStorageOptions {
-            DistributedLockRetryDelay  = TimeSpan.FromMilliseconds(1),
-            DistributedLockRetryJitter = true
-        };
-        var storage = new PengdowsCrudJobStorage(ctx, opts);
+        var storage = new PengdowsCrudJobStorage(ctx);
 
-        // conn2: UPDATE returns 0 → stolen=false → retry loop entered
-        var conn2 = new fakeDbConnection();
-        conn2.NonQueryResults.Enqueue(0);
-        factory.Connections.Insert(0, conn2);
-
-        // conn1: INSERT throws UniqueConstraintViolationException (first attempt)
-        var conn1 = new fakeDbConnection();
-        conn1.SetNonQueryExecuteException(
-            new UniqueConstraintViolationException("dup", SupportedDatabase.SqlServer));
-        factory.Connections.Insert(0, conn1);
-
-        // long timeout: retry happens; second INSERT (conn3, auto-created) succeeds
-        using var lk = new PengdowsCrudDistributedLock(storage, "res-retry", TimeSpan.FromSeconds(30));
-        Assert.Equal(AcquireMode.FollowRelease, lk.HowAcquired);
-        Assert.Equal(1, lk.AcquireRetryCount);
+        // fakeDb returns 1 by default for NonQuery — UPSERT succeeds
+        using var lk = new PengdowsCrudDistributedLock(storage, "res-upsert-win", TimeSpan.FromSeconds(30));
+        Assert.False(lk.LeaseLost);
     }
 
     [Fact]
-    public void Constructor_WhenInsertConflictsThenRetryNoJitter_AcquiresFollowRelease()
+    public void JitteredDelay_ReturnsValueInExpectedRange()
+    {
+        // JitteredDelay: ms = base/2 + NextInt64(base) → range [base/2, base*3/2)
+        // For base=100ms: [50ms, 149ms] inclusive
+        var method = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("JitteredDelay", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var baseDelay = TimeSpan.FromMilliseconds(100);
+        for (var i = 0; i < 20; i++)
+        {
+            var result = (TimeSpan)method.Invoke(null, [baseDelay])!;
+            Assert.InRange(result.TotalMilliseconds, 50.0, 149.0);
+        }
+    }
+
+    [Fact]
+    public void Constructor_JitterDisabled_AcquiresLockAfterRetry()
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx     = new DatabaseContext("Data Source=fake", factory);
-        var opts    = new PengdowsCrudStorageOptions {
-            DistributedLockRetryDelay  = TimeSpan.FromMilliseconds(1),
-            DistributedLockRetryJitter = false
+        var opts    = new PengdowsCrudStorageOptions
+        {
+            DistributedLockRetryJitter = false,
+            DistributedLockRetryDelay = TimeSpan.FromMilliseconds(1)
         };
         var storage = new PengdowsCrudJobStorage(ctx, opts);
 
-        var conn2 = new fakeDbConnection();
-        conn2.NonQueryResults.Enqueue(0);
-        factory.Connections.Insert(0, conn2);
+        // First TryAcquireAsync returns 0 (lock contended); on retry the default 1 succeeds
+        var conn = new fakeDbConnection();
+        conn.NonQueryResults.Enqueue(0);
+        factory.Connections.Insert(0, conn);
 
-        var conn1 = new fakeDbConnection();
-        conn1.SetNonQueryExecuteException(
-            new UniqueConstraintViolationException("dup", SupportedDatabase.SqlServer));
-        factory.Connections.Insert(0, conn1);
+        using var lk = new PengdowsCrudDistributedLock(storage, "jitter-disabled", TimeSpan.FromSeconds(5));
+        Assert.False(lk.LeaseLost);
+    }
 
-        using var lk = new PengdowsCrudDistributedLock(storage, "res-retry-nojitter", TimeSpan.FromSeconds(30));
-        Assert.Equal(AcquireMode.FollowRelease, lk.HowAcquired);
+    [Fact]
+    public async Task RenewAsync_WhenRenewalReturnsFalse_SetsLeaseLost()
+    {
+        var (storage, factory) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-fail", TimeSpan.FromSeconds(30));
+        Assert.False(lk.LeaseLost);
+
+        // Inject a connection returning 0 for the next non-query so TryRenewAsync returns false
+        // (each CreateSqlContainer opens a fresh connection from the factory queue)
+        var conn = new fakeDbConnection();
+        conn.NonQueryResults.Enqueue(0);
+        factory.Connections.Insert(0, conn);
+
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;
+
+        Assert.True(lk.LeaseLost);
+    }
+
+    [Fact]
+    public async Task RenewAsync_WhenRenewalSucceeds_DoesNotSetLeaseLost()
+    {
+        var (storage, _) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-success", TimeSpan.FromSeconds(30));
+
+        // Default fakeDb returns 1 for NonQuery → TryRenewAsync returns true → success path
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;
+
+        Assert.False(lk.LeaseLost);
+    }
+
+    [Fact]
+    public async Task RenewAsync_WhenTryRenewThrows_DoesNotPropagate()
+    {
+        var (storage, factory) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-throw", TimeSpan.FromSeconds(30));
+
+        var conn = new fakeDbConnection();
+        conn.SetNonQueryExecuteException(new Exception("db error"));
+        factory.Connections.Insert(0, conn);
+
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;  // must not throw
+
+        Assert.False(lk.LeaseLost);
+    }
+
+    [Fact]
+    public void Dispose_WhenReleaseFails_DoesNotThrow()
+    {
+        var (storage, factory) = CreateStorage();
+        var lk = new PengdowsCrudDistributedLock(storage, "dispose-fail", TimeSpan.FromSeconds(30));
+
+        var conn = new fakeDbConnection();
+        conn.SetNonQueryExecuteException(new Exception("release failed"));
+        factory.Connections.Insert(0, conn);
+
+        lk.Dispose();  // must not throw even when ReleaseAsync fails
     }
 }

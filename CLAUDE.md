@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `pengdows.hangfire` is a Hangfire job storage backend built on [pengdows.crud](../pengdows.crud) — a SQL-first, strongly-typed data access layer. It provides cross-database Hangfire storage via explicit SQL and the gateway pattern.
 
+**Supported databases:** SQL Server, PostgreSQL, MySQL, MariaDB, Oracle, SQLite, DuckDB, Firebird, CockroachDB, YugabyteDB, TiDB, Aurora MySQL, Aurora PostgreSQL, TimescaleDB. **Snowflake is not supported** — it is an analytical data warehouse with transactional limitations (no row-level locking, limited DML concurrency) that make it fundamentally unsuitable for a job queue.
+
 ## Build and Test Commands
 
 ```bash
@@ -94,11 +96,12 @@ return await sc.ExecuteNonQueryAsync();
 ```csharp
 GlobalConfiguration.Configuration
     .UsePengdowsCrudStorage(databaseContext, options => {
-        options.SchemaName = "hangfire";
         options.AutoPrepareSchema = true;
         options.QueuePollInterval = TimeSpan.FromSeconds(5);
     });
 ```
+
+`SchemaName` exists only for backward compatibility and is ignored. On schema-capable databases, this storage always uses the built-in `HangFire` schema.
 
 ## Testing Infrastructure
 

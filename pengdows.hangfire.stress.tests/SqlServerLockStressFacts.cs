@@ -12,25 +12,23 @@ using Xunit.Abstractions;
 
 namespace pengdows.hangfire.stress.tests;
 
-[Collection("DuckDbStress")]
-public class DuckDbLockStressFacts
+[Collection("SqlServerStress")]
+public class SqlServerLockStressFacts
 {
-    private readonly DuckDbStressFixture _f;
+    private readonly SqlServerFixture _f;
     private readonly ITestOutputHelper _out;
 
-    public DuckDbLockStressFacts(DuckDbStressFixture fixture, ITestOutputHelper output)
+    public SqlServerLockStressFacts(SqlServerFixture fixture, ITestOutputHelper output)
     {
         _f = fixture;
         _out = output;
     }
 
-    [Fact(Timeout = 30_000)]
-    public async Task MutualExclusion_20ConcurrentWorkers_ZeroOverlap_DuckDbSingleWriter()
+    [Fact(Timeout = 120_000)]
+    public async Task MutualExclusion_200ConcurrentWorkers_ZeroOverlap_SqlServer()
     {
-        // DuckDB is a single-process embedded database — realistic deployments have one
-        // worker process with a handful of concurrent Hangfire threads, not hundreds.
-        const int workerCount = 20;
-        var resource  = "duckdb-stress-" + Guid.NewGuid().ToString("N");
+        const int workerCount = 200;
+        var resource  = "sqlserver-stress-" + Guid.NewGuid().ToString("N");
         var tracker   = new OwnershipTracker();
         var latencies = new ConcurrentBag<long>();
         long acquired = 0, timeouts = 0;
@@ -53,8 +51,7 @@ public class DuckDbLockStressFacts
                     tracker.Enter(resource, tid);
 
                     Interlocked.Increment(ref acquired);
-                    
-                    // Simulate work
+
                     Thread.Sleep(Random.Shared.Next(5, 15));
 
                     tracker.Exit(resource, tid, entered, DateTime.UtcNow);
@@ -71,17 +68,14 @@ public class DuckDbLockStressFacts
 
         await Task.Run(() => { foreach (var t in threads) t.Join(); });
 
-        // Single-attempt design: workers that cannot immediately steal an expired row
-        // receive DistributedLockTimeoutException immediately — timeouts are expected
-        // under burst contention.  Correctness invariant: zero violations.
         Assert.Equal(0, tracker.Violations);
         Assert.Equal(0, tracker.CountIntervalOverlaps());
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1);
 
         var sorted = latencies.OrderBy(x => x).ToList();
-        _out.WriteLine($"DuckDB SingleWriter Stress (single-process): workers={workerCount}  acquired={acquired}  timeouts={timeouts}  violations={tracker.Violations}  maxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
+        _out.WriteLine($"SQL Server Stress: workers={workerCount}  acquired={acquired}  timeouts={timeouts}  violations={tracker.Violations}  maxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
         _out.WriteLine($"Acquire-latency ms  p50={Pct(sorted,50)}  p95={Pct(sorted,95)}  p99={Pct(sorted,99)}  max={sorted.LastOrDefault()}");
-        
+
         EmitDatabaseMetrics(_f.Storage);
     }
 

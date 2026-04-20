@@ -207,8 +207,8 @@ public sealed class LockCrashPathTests
 
         // 1. A acquires (version=1) and renews twice → version=3
         var now = DateTime.UtcNow;
-        var (recordA, _) = await _f.Storage.Locks.TryAcquireAsync(resource, ownerA, now + ttl, now);
-        Assert.NotNull(recordA);
+        var claimedA = await _f.Storage.Locks.TryAcquireAsync(resource, ownerA, now + ttl, now);
+        Assert.True(claimedA);
         Assert.True(await _f.Storage.Locks.TryRenewAsync(resource, ownerA, 1, DateTime.UtcNow + ttl)); // 1→2
         Assert.True(await _f.Storage.Locks.TryRenewAsync(resource, ownerA, 2, DateTime.UtcNow + ttl)); // 2→3
         const int staleVersion = 3;
@@ -224,9 +224,8 @@ public sealed class LockCrashPathTests
 
         // 3. B steals the expired row
         now = DateTime.UtcNow;
-        var (recordB, wasSteal) = await _f.Storage.Locks.TryAcquireAsync(resource, ownerB, now + ttl, now);
-        Assert.NotNull(recordB);
-        Assert.True(wasSteal, "Expected B to steal the expired row via conditional UPDATE");
+        var claimedB = await _f.Storage.Locks.TryAcquireAsync(resource, ownerB, now + ttl, now);
+        Assert.True(claimedB, "Expected B to steal the expired row via conditional UPDATE");
 
         // Capture B's row state before A's stale renew
         var versionAfterSteal = await _f.QueryScalarAsync<int>(

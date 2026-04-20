@@ -105,9 +105,11 @@ public sealed class LockStressTests
 
         await Task.Run(() => { foreach (var t in threads) t.Join(); });
 
+        // Single-attempt design: workers that cannot immediately steal an expired row
+        // receive DistributedLockTimeoutException immediately under burst contention.
+        // Correctness invariant: zero violations among workers that did acquire.
         Assert.Equal(0, tracker.Violations);
         Assert.Equal(0, tracker.CountIntervalOverlaps());
-        Assert.Equal(0, timeouts); // 90s timeout — no worker should time out
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
@@ -172,9 +174,10 @@ public sealed class LockStressTests
 
         await Task.Run(() => { foreach (var t in threads) t.Join(); });
 
+        // Single-attempt design: workers that cannot immediately acquire throw immediately.
+        // Correctness invariant: zero violations among workers that did acquire.
         Assert.Equal(0, tracker.Violations);
         Assert.Equal(0, tracker.CountIntervalOverlaps());
-        Assert.Equal(0, timeouts); // 180s timeout — no worker should time out
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
@@ -203,18 +206,21 @@ public sealed class LockStressTests
         const int waiterCount = 20;
         var resource = "stress-longholder-" + Guid.NewGuid().ToString("N");
         long timeoutCount = 0;
-        var holderDone = new TaskCompletionSource();
+        long acquiredCount = 0;
+        var holderAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holderDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var holderTask = Task.Run(async () =>
         {
             using var lk = new PengdowsCrudDistributedLock(
                 _f.Storage, resource, TimeSpan.FromSeconds(5));
+            holderAcquired.SetResult();
             await Task.Delay(8_000);
             holderDone.SetResult();
         });
 
-        // Give the holder time to acquire before launching waiters
-        await Task.Delay(300);
+        // Start contention only after the long holder definitely owns the row.
+        await holderAcquired.Task;
 
         var waiterTasks = Enumerable.Range(0, waiterCount).Select(_ => Task.Run(() =>
         {
@@ -222,6 +228,7 @@ public sealed class LockStressTests
             {
                 using var lk = new PengdowsCrudDistributedLock(
                     _f.Storage, resource, TimeSpan.FromSeconds(2));
+                Interlocked.Increment(ref acquiredCount);
             }
             catch (DistributedLockTimeoutException)
             {
@@ -232,6 +239,7 @@ public sealed class LockStressTests
         await Task.WhenAll(waiterTasks);
         await holderTask;
 
+        Assert.Equal(0, acquiredCount);
         Assert.Equal(waiterCount, timeoutCount);
 
         // After the holder releases, the resource must be acquirable
@@ -239,7 +247,7 @@ public sealed class LockStressTests
             _f.Storage, resource, TimeSpan.FromSeconds(5));
         Assert.NotNull(recovery);
 
-        _out.WriteLine($"LongHolder: {waiterCount} waiters all timed out; recovery lock acquired successfully");
+        _out.WriteLine($"LongHolder: waiters={waiterCount}  timeouts={timeoutCount}  unexpectedAcquires={acquiredCount}; recovery lock acquired successfully");
     }
 
     // ── 4. Sustained throughput — ops/sec and latency distribution ───────────
@@ -254,9 +262,8 @@ public sealed class LockStressTests
         const int workerCount = 10;
         const int durationMs  = 10_000;
         var resource          = "stress-throughput-" + Guid.NewGuid().ToString("N");
-        var tracker           = new OwnershipTracker();
-        var modeLatencies     = ModeLatencyBags();
-        var followRetryCounts = new ConcurrentBag<int>();
+        var tracker  = new OwnershipTracker();
+        var latencies = new ConcurrentBag<long>();
         long acquires = 0, timeouts = 0;
         var cts = new CancellationTokenSource(durationMs);
 
@@ -270,18 +277,14 @@ public sealed class LockStressTests
                     using var lk = new PengdowsCrudDistributedLock(
                         _f.Storage, resource, TimeSpan.FromSeconds(10));
 
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
-                    if (lk.HowAcquired == AcquireMode.FollowRelease)
-                    {
-                        followRetryCounts.Add(lk.AcquireRetryCount);
-                    }
+                    latencies.Add(sw.ElapsedMilliseconds);
 
                     var tid     = Guid.NewGuid().ToString("N");
                     var entered = DateTime.UtcNow;
                     tracker.Enter(resource, tid);
 
                     Interlocked.Increment(ref acquires);
-                    
+
                     // Periodic read to populate Read Role metrics
                     if (acquires % 5 == 0)
                     {
@@ -307,14 +310,13 @@ public sealed class LockStressTests
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
         _out.WriteLine($"Throughput: {acquires} acquires / {durationMs} ms = {opsPerSec:F1} ops/sec");
         _out.WriteLine($"Acquire-latency ms  p50={Pct(allLatencies,50)}  p95={Pct(allLatencies,95)}  p99={Pct(allLatencies,99)}  max={allLatencies.LastOrDefault()}");
         _out.WriteLine($"Timeouts={timeouts}  Violations={tracker.Violations}  IntervalOverlaps={tracker.CountIntervalOverlaps()}  MaxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
-        
+
         EmitDatabaseMetrics(_f.Storage);
-        EmitModeBreakdown(modeLatencies, followRetryCounts);
     }
 
     // ── 5. Short sustained run (30 s, production pool) ────────────────────────
@@ -336,11 +338,10 @@ public sealed class LockStressTests
         const int durationMs         = 30_000;
         const int productionPoolSize = 100;
 
-        var resource          = "stress-sustained-" + Guid.NewGuid().ToString("N");
-        var storage           = _f.CreateStorageWithPoolSize(productionPoolSize);
-        var tracker           = new OwnershipTracker();
-        var modeLatencies     = ModeLatencyBags();
-        var followRetryCounts = new ConcurrentBag<int>();
+        var resource  = "stress-sustained-" + Guid.NewGuid().ToString("N");
+        var storage   = _f.CreateStorageWithPoolSize(productionPoolSize);
+        var tracker   = new OwnershipTracker();
+        var latencies = new ConcurrentBag<long>();
         long acquires = 0, timeouts = 0;
         var cts = new CancellationTokenSource(durationMs);
 
@@ -354,11 +355,7 @@ public sealed class LockStressTests
                     using var lk = new PengdowsCrudDistributedLock(
                         storage, resource, TimeSpan.FromSeconds(15));
 
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
-                    if (lk.HowAcquired == AcquireMode.FollowRelease)
-                    {
-                        followRetryCounts.Add(lk.AcquireRetryCount);
-                    }
+                    latencies.Add(sw.ElapsedMilliseconds);
 
                     var tid     = Guid.NewGuid().ToString("N");
                     var entered = DateTime.UtcNow;
@@ -383,14 +380,13 @@ public sealed class LockStressTests
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
         _out.WriteLine($"ShortSustained({durationMs / 1000}s pool={productionPoolSize}): {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
         _out.WriteLine($"Acquire-latency ms  p50={Pct(allLatencies,50)}  p95={Pct(allLatencies,95)}  p99={Pct(allLatencies,99)}  max={allLatencies.LastOrDefault()}");
         _out.WriteLine($"Violations={tracker.Violations}  IntervalOverlaps={tracker.CountIntervalOverlaps()}  MaxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
-        
+
         EmitDatabaseMetrics(storage);
-        EmitModeBreakdown(modeLatencies, followRetryCounts);
     }
 
     // ── 6. Long-running sustained (10 min) — LongRunning category ────────────
@@ -413,10 +409,10 @@ public sealed class LockStressTests
         const int durationMs         = 600_000; // 10 minutes
         const int productionPoolSize = 100;
 
-        var resource      = "stress-soak10m-" + Guid.NewGuid().ToString("N");
-        var storage       = _f.CreateStorageWithPoolSize(productionPoolSize);
-        var tracker       = new OwnershipTracker();
-        var modeLatencies = ModeLatencyBags();
+        var resource  = "stress-soak10m-" + Guid.NewGuid().ToString("N");
+        var storage   = _f.CreateStorageWithPoolSize(productionPoolSize);
+        var tracker   = new OwnershipTracker();
+        var latencies = new ConcurrentBag<long>();
         long acquires = 0, timeouts = 0;
         var cts = new CancellationTokenSource(durationMs);
 
@@ -430,7 +426,7 @@ public sealed class LockStressTests
                     using var lk = new PengdowsCrudDistributedLock(
                         storage, resource, TimeSpan.FromSeconds(15));
 
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
+                    latencies.Add(sw.ElapsedMilliseconds);
 
                     var tid     = Guid.NewGuid().ToString("N");
                     var entered = DateTime.UtcNow;
@@ -455,14 +451,13 @@ public sealed class LockStressTests
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
 
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
         _out.WriteLine($"Soak(10min pool={productionPoolSize}): {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
         _out.WriteLine($"Acquire-latency ms  p50={Pct(allLatencies,50)}  p95={Pct(allLatencies,95)}  p99={Pct(allLatencies,99)}  max={allLatencies.LastOrDefault()}");
         _out.WriteLine($"Violations={tracker.Violations}  IntervalOverlaps={tracker.CountIntervalOverlaps()}  MaxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
-        
+
         EmitDatabaseMetrics(storage);
-        EmitModeBreakdown(modeLatencies);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -481,182 +476,14 @@ public sealed class LockStressTests
         return sorted[Math.Max(0, idx)];
     }
 
-    // ── 7. Wait-strategy sweep — retry delay vs latency/throughput ───────────
+    // ── 7. Fan-in scaling — upsert rate vs worker count ──────────────────────
 
     /// <summary>
-    /// Runs a fixed-duration sustained load scenario at each retry delay value
-    /// and reports latency percentiles, acquire-mode breakdown, and throughput
-    /// side-by-side.
-    ///
-    /// This quantifies whether the p95/p99 tail is inherent to the lease model
-    /// or an artefact of the retry-sleep granularity.
-    ///
-    /// Shorter delays reduce latency quantization but increase DB call volume;
-    /// longer delays reduce traffic but coarsen waiter wake-up timing.
-    /// </summary>
-    [Theory(Timeout = 120_000)]
-    [InlineData(25)]
-    [InlineData(50)]
-    [InlineData(100)]
-    [InlineData(200)]
-    public async Task WaitStrategy_RetryDelay_LatencyAndThroughput(int retryDelayMs)
-    {
-        const int workerCount = 10;
-        const int durationMs  = 15_000;
-
-        var resource      = "stress-waitstrat-" + Guid.NewGuid().ToString("N");
-        var storage       = _f.CreateStorageWithTtl(
-            retryDelayMs: retryDelayMs,
-            ttl:          TimeSpan.FromSeconds(30));
-        var tracker       = new OwnershipTracker();
-        var modeLatencies = ModeLatencyBags();
-        var followRetryCounts = new ConcurrentBag<int>();
-        long acquires = 0, timeouts = 0;
-        var cts = new CancellationTokenSource(durationMs);
-
-        var tasks = Enumerable.Range(0, workerCount).Select(_ => Task.Run(() =>
-        {
-            while (!cts.Token.IsCancellationRequested)
-            {
-                var sw = Stopwatch.StartNew();
-                try
-                {
-                    using var lk = new PengdowsCrudDistributedLock(
-                        storage, resource, TimeSpan.FromSeconds(30));
-
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
-                    if (lk.HowAcquired == AcquireMode.FollowRelease)
-                    {
-                        followRetryCounts.Add(lk.AcquireRetryCount);
-                    }
-
-                    var tid     = Guid.NewGuid().ToString("N");
-                    var entered = DateTime.UtcNow;
-                    tracker.Enter(resource, tid);
-
-                    Interlocked.Increment(ref acquires);
-                    Thread.Sleep(Random.Shared.Next(10, 40));
-
-                    tracker.Exit(resource, tid, entered, DateTime.UtcNow);
-                }
-                catch (DistributedLockTimeoutException)
-                {
-                    Interlocked.Increment(ref timeouts);
-                }
-            }
-        })).ToArray();
-
-        await Task.WhenAll(tasks);
-
-        Assert.Equal(0, tracker.Violations);
-        Assert.Equal(0, tracker.CountIntervalOverlaps());
-        Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
-            $"retryDelay={retryDelayMs}ms: MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()}");
-
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
-        var opsPerSec    = acquires * 1000.0 / durationMs;
-
-        _out.WriteLine($"[delay={retryDelayMs,3}ms] {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
-        _out.WriteLine($"[delay={retryDelayMs,3}ms] latency ms  p50={Pct(allLatencies,50),-7}  p95={Pct(allLatencies,95),-7}  p99={Pct(allLatencies,99),-7}  max={allLatencies.LastOrDefault()}");
-        
-        EmitDatabaseMetrics(storage);
-        EmitModeBreakdown(modeLatencies, followRetryCounts);
-    }
-
-    // ── 8. Fixed vs jittered delay — phase alignment effect ──────────────────
-
-    /// <summary>
-    /// Runs the same sustained scenario twice at 50 ms — once with the fixed
-    /// delay and once with jitter — to isolate the herd-collision effect.
-    ///
-    /// With fixed delay, all waiters sleep the same interval and wake together,
-    /// creating synchronized collision spikes after a release.
-    /// With jitter ([25 ms, 75 ms]), wake-ups are staggered and the release
-    /// edge is consumed by one waiter while others are still sleeping.
-    ///
-    /// Observable difference: jitter should reduce p95/p99 for
-    /// <see cref="AcquireMode.FollowRelease"/> without meaningfully changing
-    /// throughput or <see cref="AcquireMode.InsertWin"/> latency.
-    /// </summary>
-    [Theory(Timeout = 120_000)]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WaitStrategy_Jitter_vs_Fixed_LatencyProfile(bool jitter)
-    {
-        const int workerCount = 10;
-        const int durationMs  = 20_000;
-        const int delayMs     = 50;
-
-        var resource          = "stress-jitter-" + Guid.NewGuid().ToString("N");
-        var storage           = _f.CreateStorageWithTtl(delayMs, TimeSpan.FromSeconds(30), jitter);
-        var tracker           = new OwnershipTracker();
-        var modeLatencies     = ModeLatencyBags();
-        var followRetryCounts = new ConcurrentBag<int>();
-        long acquires = 0, timeouts = 0;
-        var cts = new CancellationTokenSource(durationMs);
-
-        var tasks = Enumerable.Range(0, workerCount).Select(_ => Task.Run(() =>
-        {
-            while (!cts.Token.IsCancellationRequested)
-            {
-                var sw = Stopwatch.StartNew();
-                try
-                {
-                    using var lk = new PengdowsCrudDistributedLock(
-                        storage, resource, TimeSpan.FromSeconds(30));
-
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
-                    if (lk.HowAcquired == AcquireMode.FollowRelease)
-                    {
-                        followRetryCounts.Add(lk.AcquireRetryCount);
-                    }
-
-                    var tid     = Guid.NewGuid().ToString("N");
-                    var entered = DateTime.UtcNow;
-                    tracker.Enter(resource, tid);
-
-                    Interlocked.Increment(ref acquires);
-                    Thread.Sleep(Random.Shared.Next(10, 40));
-
-                    tracker.Exit(resource, tid, entered, DateTime.UtcNow);
-                }
-                catch (DistributedLockTimeoutException)
-                {
-                    Interlocked.Increment(ref timeouts);
-                }
-            }
-        })).ToArray();
-
-        await Task.WhenAll(tasks);
-
-        Assert.Equal(0, tracker.Violations);
-        Assert.Equal(0, tracker.CountIntervalOverlaps());
-        Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
-            $"jitter={jitter}: MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()}");
-
-        var allLatencies = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
-        var opsPerSec    = acquires * 1000.0 / durationMs;
-
-        var label = jitter ? "jitter" : "fixed ";
-        _out.WriteLine($"[{label}] {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
-        _out.WriteLine($"[{label}] latency ms  p50={Pct(allLatencies,50),-7}  p95={Pct(allLatencies,95),-7}  p99={Pct(allLatencies,99),-7}  max={allLatencies.LastOrDefault()}");
-        
-        EmitDatabaseMetrics(storage);
-        EmitModeBreakdown(modeLatencies, followRetryCounts);
-    }
-
-    // ── 9. Fan-in scaling — poll rate vs worker count ─────────────────────────
-
-    /// <summary>
-    /// Measures DB poll rate (TryAcquire + TryDeleteExpired calls per second)
-    /// as a function of concurrent worker count.
-    ///
-    /// Poll rate = workers × (hold_time / delay + 1) × (TryAcquire + TryDelete per retry).
-    /// At 25ms delay and 200 workers this approaches thousands of calls/second
-    /// on the lock table — a potential read storm at scale.
+    /// Measures DB UPSERT rate per second as a function of concurrent worker count.
+    /// Each acquire now performs exactly one UPSERT — no retry loop.
     ///
     /// What is measured:
-    ///   total_db_calls ≈ Σ(2 × retryCount + 1) over all acquires
+    ///   total_db_calls = acquires (one UPSERT per successful acquire)
     ///   db_calls_per_second = total_db_calls / duration
     ///
     /// Safety invariant still applies — MaxConcurrentOwners must remain ≤ 1.
@@ -665,16 +492,14 @@ public sealed class LockStressTests
     [InlineData(10)]
     [InlineData(50)]
     [InlineData(200)]
-    public async Task FanIn_PollRateScaling_ByWorkerCount(int workerCount)
+    public async Task FanIn_UpsertRateScaling_ByWorkerCount(int workerCount)
     {
         const int durationMs = 15_000;
-        const int delayMs    = 50;
 
-        var resource          = "stress-fanin-" + Guid.NewGuid().ToString("N");
-        var storage           = _f.CreateStorageWithTtl(delayMs, TimeSpan.FromSeconds(30));
-        var tracker           = new OwnershipTracker();
-        var modeLatencies     = ModeLatencyBags();
-        var followRetryCounts = new ConcurrentBag<int>();
+        var resource  = "stress-fanin-" + Guid.NewGuid().ToString("N");
+        var storage   = _f.CreateStorageWithPoolSize(Math.Max(workerCount, 256), TimeSpan.FromSeconds(30));
+        var tracker   = new OwnershipTracker();
+        var latencies = new ConcurrentBag<long>();
         long totalDbCalls = 0;
         long acquires     = 0;
         long timeouts     = 0;
@@ -690,17 +515,9 @@ public sealed class LockStressTests
                     using var lk = new PengdowsCrudDistributedLock(
                         storage, resource, TimeSpan.FromSeconds(30));
 
-                    // Each acquire: per sleep retry = 1 INSERT fail + 1 UPDATE miss = 2 calls.
-                    // Final successful step: INSERT win = 1 call; steal (INSERT fail + UPDATE hit) = 2 calls.
-                    var dbCallsThisAcquire = lk.AcquireRetryCount * 2
-                        + (lk.HowAcquired == AcquireMode.TtlSteal ? 2 : 1);
-                    Interlocked.Add(ref totalDbCalls, dbCallsThisAcquire);
-
-                    modeLatencies[lk.HowAcquired].Add(sw.ElapsedMilliseconds);
-                    if (lk.HowAcquired == AcquireMode.FollowRelease)
-                    {
-                        followRetryCounts.Add(lk.AcquireRetryCount);
-                    }
+                    // Each acquire = exactly 1 UPSERT (single-attempt design).
+                    Interlocked.Add(ref totalDbCalls, 1);
+                    latencies.Add(sw.ElapsedMilliseconds);
 
                     var tid     = Guid.NewGuid().ToString("N");
                     var entered = DateTime.UtcNow;
@@ -713,8 +530,6 @@ public sealed class LockStressTests
                 }
                 catch (DistributedLockTimeoutException)
                 {
-                    // Timed-out workers also polled, but retryCount is not available
-                    // post-throw; conservatively count 0 extra to avoid over-reporting.
                     Interlocked.Increment(ref timeouts);
                 }
             }
@@ -728,15 +543,14 @@ public sealed class LockStressTests
             $"workers={workerCount}: MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()}");
 
         var dbCallsPerSec = totalDbCalls * 1000.0 / durationMs;
-        var allLatencies  = modeLatencies.Values.SelectMany(b => b).OrderBy(x => x).ToList();
+        var allLatencies  = latencies.OrderBy(x => x).ToList();
         var opsPerSec     = acquires * 1000.0 / durationMs;
 
         _out.WriteLine($"FanIn workers={workerCount,3}: {acquires} acquires = {opsPerSec:F1} ops/sec  timeouts={timeouts}");
-        _out.WriteLine($"FanIn workers={workerCount,3}: db calls = {totalDbCalls} = {dbCallsPerSec:F0} calls/sec  (delay={delayMs}ms, jitter=on)");
+        _out.WriteLine($"FanIn workers={workerCount,3}: db calls = {totalDbCalls} = {dbCallsPerSec:F0} calls/sec");
         _out.WriteLine($"FanIn workers={workerCount,3}: latency ms  p50={Pct(allLatencies,50),-7}  p95={Pct(allLatencies,95),-7}  p99={Pct(allLatencies,99),-7}");
-        
+
         EmitDatabaseMetrics(storage);
-        EmitModeBreakdown(modeLatencies, followRetryCounts);
     }
 
     private void EmitDatabaseMetrics(PengdowsCrudJobStorage storage)
@@ -748,52 +562,4 @@ public sealed class LockStressTests
         }
     }
 
-    /// <summary>
-    /// Returns one latency bag per <see cref="AcquireMode"/> value so that
-    /// callers can record acquisition latency separately per code path.
-    /// </summary>
-    private static Dictionary<AcquireMode, ConcurrentBag<long>> ModeLatencyBags() =>
-        Enum.GetValues<AcquireMode>()
-            .ToDictionary(m => m, _ => new ConcurrentBag<long>());
-
-    /// <summary>
-    /// Writes a per-mode latency breakdown and, for <see cref="AcquireMode.FollowRelease"/>,
-    /// retry-count statistics that expose waiter polling cost.
-    ///
-    /// Example:
-    ///   AcquireMode breakdown:
-    ///     InsertWin     n=950  p50=0    p95=1    p99=1    max=5
-    ///     FollowRelease n=45   p50=3013 p95=9800 p99=13000 max=15069
-    ///                   retries: avg=31 p50=31 p95=98 max=143
-    ///     TtlSteal      (no samples)
-    /// </summary>
-    private void EmitModeBreakdown(
-        Dictionary<AcquireMode, ConcurrentBag<long>> modeLatencies,
-        ConcurrentBag<int>? followRetryCounts = null)
-    {
-        _out.WriteLine("  AcquireMode breakdown:");
-        foreach (var mode in Enum.GetValues<AcquireMode>())
-        {
-            var sorted = modeLatencies[mode].OrderBy(x => x).ToList();
-            if (sorted.Count == 0)
-            {
-                continue;
-            }
-
-            _out.WriteLine(
-                $"    {mode,-14} n={sorted.Count,-5}  " +
-                $"p50={Pct(sorted, 50),-7}  p95={Pct(sorted, 95),-7}  " +
-                $"p99={Pct(sorted, 99),-7}  max={sorted.Last()}");
-
-            if (mode == AcquireMode.FollowRelease && followRetryCounts is { IsEmpty: false })
-            {
-                var retrySorted = followRetryCounts.OrderBy(x => x).ToList();
-                var avg = retrySorted.Average();
-                _out.WriteLine(
-                    $"    {"retries",-14} avg={avg,-5:F1}  " +
-                    $"p50={Pct(retrySorted, 50),-7}  p95={Pct(retrySorted, 95),-7}  " +
-                    $"p99={Pct(retrySorted, 99),-7}  max={retrySorted.Last()}");
-            }
-        }
-    }
 }

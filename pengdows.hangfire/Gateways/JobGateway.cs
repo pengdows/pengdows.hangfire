@@ -10,7 +10,8 @@ public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
 
     public async Task<int> UpdateExpireAtAsync(long id, DateTime? expireAt, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("ExpireAt").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("expireAt", DbType.DateTime, expireAt as object ?? DBNull.Value));
@@ -21,7 +22,8 @@ public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
 
     public async Task<int> UpdateStateNameAsync(long id, string stateName, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("StateName").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("stateName", DbType.String, stateName));
@@ -32,7 +34,8 @@ public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
 
     public async Task<int> UpdateStateAsync(long id, long stateId, string stateName, IDatabaseContext? context = null)
     {
-        await using var sc = (context ?? Context).CreateSqlContainer();
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("StateId").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("stateId", DbType.Int64, stateId));
@@ -44,30 +47,37 @@ public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<Job>> GetPagedByStateAsync(string stateName, int from, int count)
+    public Task<List<Job>> GetPagedByStateAsync(string stateName, int from, int count)
+        => GetPagedByStateAsync(stateName, from, count, null);
+
+    public async Task<List<Job>> GetPagedByStateAsync(string stateName, int from, int count, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("j");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("j", ctx);
         sc.AppendWhere();
         sc.AppendName("j.StateName").AppendEquals()
           .AppendParam(sc.AddParameterWithValue("stateName", DbType.String, stateName));
         sc.AppendQuery(" ORDER BY ").AppendName("j.Id").AppendQuery(" DESC");
-        Context.Dialect.AppendPaging(sc.Query, from, count);
+        ctx.Dialect.AppendPaging(sc.Query, from, count);
         return await LoadListAsync(sc);
     }
 
-    public async Task<int> DeleteExpiredAsync(int batchSize)
+    public Task<int> DeleteExpiredAsync(int batchSize) => DeleteExpiredAsync(batchSize, null);
+
+    public async Task<int> DeleteExpiredAsync(int batchSize, IDatabaseContext? context = null)
     {
-        var sc = BuildBaseRetrieve("j");
+        var ctx = context ?? Context;
+        var sc = BuildBaseRetrieve("j", ctx);
         sc.AppendWhere();
         sc.AppendName("j.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
         sc.AppendQuery(" ORDER BY ").AppendName("j.Id").AppendQuery(" ASC");
-        Context.Dialect.AppendPaging(sc.Query, 0, batchSize);
+        ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);
         if (expired.Count == 0)
         {
             return 0;
         }
 
-        return await BatchDeleteAsync(expired.Select(j => j.ID));
+        return await BatchDeleteAsync(expired.Select(j => j.ID), ctx);
     }
 }

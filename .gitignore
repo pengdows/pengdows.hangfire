@@ -4,7 +4,7 @@
 
 # Test results and coverage
 TestResults/
-coverage-report/
+coverage-report*/
 *.trx
 *.coverage
 *.coveragexml
@@ -26,6 +26,9 @@ coverlet*.json
 *.userosscache
 *.sln.docstates
 *.DotSettings.user
+
+# CI-managed state (stored in GitHub repository variables)
+.github/coverage-baseline.txt
 
 # Local AI/tooling state
 .claude/settings.local.json
