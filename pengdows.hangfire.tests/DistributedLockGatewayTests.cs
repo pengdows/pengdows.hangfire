@@ -173,4 +173,35 @@ public sealed class DistributedLockGatewayTests
             Assert.DoesNotContain(";", sql, StringComparison.OrdinalIgnoreCase);
         }
     }
+
+    [Fact]
+    public async Task TryRenewAsync_WhenUpdateAffectsOneRow_ReturnsTrue()
+    {
+        var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);
+        await using (ctx)
+        {
+            var renewed = await new DistributedLockGateway(ctx).TryRenewAsync(
+                "res",
+                "owner",
+                1,
+                DateTime.UtcNow.AddMinutes(1));
+
+            Assert.True(renewed);
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "version"));
+        }
+    }
+
+    [Fact]
+    public async Task ReleaseAsync_UsesDeleteWithOwnerGuard()
+    {
+        var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);
+        await using (ctx)
+        {
+            await new DistributedLockGateway(ctx).ReleaseAsync("res", "owner");
+
+            Assert.True(NonQueryContains(factory, "DELETE"));
+            Assert.True(NonQueryContains(factory, "owner_id"));
+        }
+    }
 }

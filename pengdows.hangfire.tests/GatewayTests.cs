@@ -794,6 +794,24 @@ public sealed class GatewayTests
         }
     }
 
+    [Fact]
+    public async Task Counter_AggregateAsync_SqlServer_UsesMergeWithHoldLock()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["Key"] = "stats:success", ["Value"] = 3 }
+        });
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.True(NonQueryContains(factory, "MERGE"));
+            Assert.True(NonQueryContains(factory, "HOLDLOCK"));
+            Assert.False(NonQueryContains(factory, "ON CONFLICT"));
+        }
+    }
+
     // ── AggregatedCounterGateway ─────────────────────────────────────────────
 
     [Fact]
@@ -1172,6 +1190,20 @@ public sealed class GatewayTests
         {
             var result = await new AggregatedCounterGateway(ctx).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
+        }
+    }
+
+    // ── ServerGateway ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Server_UpdateHeartbeatAsync_IssuesUpdateStatement()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new ServerGateway(ctx).UpdateHeartbeatAsync("server-1");
+            Assert.True(NonQueryContains(factory, "UPDATE"));
+            Assert.True(NonQueryContains(factory, "LastHeartbeat"));
         }
     }
 

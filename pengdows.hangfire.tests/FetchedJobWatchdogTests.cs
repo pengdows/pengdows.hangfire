@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using Hangfire.Server;
 using pengdows.crud;
 using pengdows.crud.enums;
 using pengdows.crud.fakeDb;
@@ -15,6 +18,9 @@ public sealed class FetchedJobWatchdogTests
         var ctx     = new DatabaseContext("Data Source=fake", factory);
         return (new PengdowsCrudJobStorage(ctx), factory);
     }
+
+    private static BackgroundProcessContext CreateProcessContext(PengdowsCrudJobStorage storage, CancellationToken stoppingToken = default)
+        => new("server-1", storage, new Dictionary<string, object>(), Guid.NewGuid(), stoppingToken, CancellationToken.None, CancellationToken.None);
 
     [Fact]
     public void Constructor_NullStorage_Throws()
@@ -67,5 +73,17 @@ public sealed class FetchedJobWatchdogTests
         var watchdog = new FetchedJobWatchdog(storage, TimeSpan.FromMinutes(5));
         var ex = Record.Exception(() => watchdog.RunOnce());
         Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Execute_RunsWatchdog_ThenWaitsForInterval()
+    {
+        var (storage, factory) = CreateStorage();
+        var watchdog = new FetchedJobWatchdog(storage, TimeSpan.Zero);
+        var context = CreateProcessContext(storage);
+
+        watchdog.Execute(context);
+
+        Assert.True(factory.CreatedConnections.Any());
     }
 }

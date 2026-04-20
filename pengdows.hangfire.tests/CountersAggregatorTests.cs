@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Hangfire.Server;
 using pengdows.crud;
 using pengdows.crud.enums;
@@ -16,6 +18,9 @@ public sealed class CountersAggregatorTests
         var ctx     = new DatabaseContext("Host=fake", factory);
         return (new PengdowsCrudJobStorage(ctx), factory);
     }
+
+    private static BackgroundProcessContext CreateProcessContext(PengdowsCrudJobStorage storage, CancellationToken stoppingToken = default)
+        => new("server-1", storage, new Dictionary<string, object>(), Guid.NewGuid(), stoppingToken, CancellationToken.None, CancellationToken.None);
 
     [Fact]
     public void RunOnce_IssuesAggregateCalls()
@@ -67,5 +72,26 @@ public sealed class CountersAggregatorTests
     {
         Assert.Throws<ArgumentNullException>(() =>
             new CountersAggregator(null!, TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public void Execute_WaitsBetweenFullBatchPasses_AndForInterval()
+    {
+        var (storage, factory) = CreateStorage();
+        var aggregator = new CountersAggregator(storage, TimeSpan.Zero);
+
+        var batch = Enumerable.Range(1, 1000).Select(i => new Dictionary<string, object>
+        {
+            ["Id"] = (long)i,
+            ["Key"] = "k",
+            ["Value"] = 1
+        }).ToList();
+        factory.EnqueueReaderResult(batch);
+        factory.EnqueueReaderResult(Array.Empty<Dictionary<string, object>>());
+
+        var context = CreateProcessContext(storage);
+        aggregator.Execute(context);
+
+        Assert.True(factory.CreatedConnections.Count >= 2);
     }
 }
