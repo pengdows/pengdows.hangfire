@@ -160,6 +160,15 @@ public sealed class MonitoringApiTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public void FetchedJobs_NoQueueItems_HitsEarlyReturnPath()
+    {
+        var (api, _) = CreateApi();
+        // No reader enqueued → GetPagedByQueueAsync returns empty list → early return at queueItems.Count == 0
+        var result = api.FetchedJobs("default", 0, 10);
+        Assert.Empty(result);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string MakeInvocationData()

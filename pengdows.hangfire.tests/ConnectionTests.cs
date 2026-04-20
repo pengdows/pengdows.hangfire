@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using Hangfire.Server;
 using pengdows.crud;
@@ -601,5 +602,91 @@ public sealed class ConnectionTests
         var result = conn.GetStateData("1");
         Assert.NotNull(result);
         Assert.Equal("Succeeded", result.Name);
+    }
+
+    // ── GetFirstByLowestScoreFromSet happy paths ──────────────────────────────
+
+    [Fact]
+    public void GetFirstByLowestScoreFromSet_Single_ValidKey_ReturnsNull()
+    {
+        using var conn = MakeConnection();
+        var result = conn.GetFirstByLowestScoreFromSet("sk", 0.0, 1.0);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetFirstByLowestScoreFromSet_Multi_ValidKey_ReturnsEmpty()
+    {
+        using var conn = MakeConnection();
+        var result = conn.GetFirstByLowestScoreFromSet("sk", 0.0, 1.0, 3);
+        Assert.Empty(result);
+    }
+
+    // ── Count happy paths ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void GetSetCount_ValidKey_ReturnsZero()
+    {
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["n"] = 0L } });
+        using var conn = new PengdowsCrudConnection(storage);
+        Assert.Equal(0L, conn.GetSetCount("sk"));
+    }
+
+    [Fact]
+    public void GetSetContains_ValidKeyAndValue_ReturnsFalse()
+    {
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["n"] = 0L } });
+        using var conn = new PengdowsCrudConnection(storage);
+        Assert.False(conn.GetSetContains("sk", "v"));
+    }
+
+    [Fact]
+    public void GetHashCount_ValidKey_ReturnsZero()
+    {
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["n"] = 0L } });
+        using var conn = new PengdowsCrudConnection(storage);
+        Assert.Equal(0L, conn.GetHashCount("hk"));
+    }
+
+    [Fact]
+    public void GetListCount_ValidKey_ReturnsZero()
+    {
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["n"] = 0L } });
+        using var conn = new PengdowsCrudConnection(storage);
+        Assert.Equal(0L, conn.GetListCount("lk"));
+    }
+
+    // ── FetchNextJob happy path ───────────────────────────────────────────────
+
+    [Fact]
+    public void FetchNextJob_JobAvailable_ReturnsFetchedJob()
+    {
+        var (storage, factory) = CreateStorage();
+        // Seed the SELECT that finds the candidate: {Id, JobId} at ordinals 0, 1
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L } });
+        // TryClaimAsync UPDATE uses the next (default) connection → returns 1 (claim wins)
+        using var conn = new PengdowsCrudConnection(storage);
+        using var result = conn.FetchNextJob(new[] { "default" }, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal("42", result.JobId);
+    }
+
+    // ── JitteredInterval ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void JitteredInterval_ReturnsValueInExpectedRange()
+    {
+        var method = typeof(PengdowsCrudConnection)
+            .GetMethod("JitteredInterval", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var baseInterval = TimeSpan.FromMilliseconds(100);
+        for (var i = 0; i < 20; i++)
+        {
+            var result = (TimeSpan)method.Invoke(null, [baseInterval])!;
+            Assert.InRange(result.TotalMilliseconds, 50.0, 149.0);
+        }
     }
 }

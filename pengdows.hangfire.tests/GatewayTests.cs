@@ -1276,4 +1276,29 @@ public sealed class GatewayTests
             Assert.True(count >= 0);
         }
     }
+
+    // ── Oracle dialect for CounterGateway.AggregateAsync ─────────────────────
+
+    [Fact]
+    public async Task Counter_AggregateAsync_Oracle_UsesMergeFromDual()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Oracle);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["Key"] = "stats:success", ["Value"] = 3 }
+        });
+        await using (ctx)
+        {
+            await new CounterGateway(ctx).AggregateAsync(100);
+            Assert.True(NonQueryContains(factory, "MERGE INTO"),
+                "Oracle: expected MERGE INTO in upsert SQL");
+            Assert.True(NonQueryContains(factory, "FROM DUAL"),
+                "Oracle: expected FROM DUAL in MERGE USING clause");
+            Assert.False(NonQueryContains(factory, "ON CONFLICT"),
+                "Oracle: ON CONFLICT must not appear");
+            Assert.False(NonQueryContains(factory, "HOLDLOCK"),
+                "Oracle: HOLDLOCK must not appear");
+        }
+    }
 }

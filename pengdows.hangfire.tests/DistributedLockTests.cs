@@ -151,4 +151,48 @@ public sealed class DistributedLockTests
 
         Assert.True(lk.LeaseLost);
     }
+
+    [Fact]
+    public async Task RenewAsync_WhenRenewalSucceeds_DoesNotSetLeaseLost()
+    {
+        var (storage, _) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-success", TimeSpan.FromSeconds(30));
+
+        // Default fakeDb returns 1 for NonQuery → TryRenewAsync returns true → success path
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;
+
+        Assert.False(lk.LeaseLost);
+    }
+
+    [Fact]
+    public async Task RenewAsync_WhenTryRenewThrows_DoesNotPropagate()
+    {
+        var (storage, factory) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-throw", TimeSpan.FromSeconds(30));
+
+        var conn = new fakeDbConnection();
+        conn.SetNonQueryExecuteException(new Exception("db error"));
+        factory.Connections.Insert(0, conn);
+
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;  // must not throw
+
+        Assert.False(lk.LeaseLost);
+    }
+
+    [Fact]
+    public void Dispose_WhenReleaseFails_DoesNotThrow()
+    {
+        var (storage, factory) = CreateStorage();
+        var lk = new PengdowsCrudDistributedLock(storage, "dispose-fail", TimeSpan.FromSeconds(30));
+
+        var conn = new fakeDbConnection();
+        conn.SetNonQueryExecuteException(new Exception("release failed"));
+        factory.Connections.Insert(0, conn);
+
+        lk.Dispose();  // must not throw even when ReleaseAsync fails
+    }
 }
