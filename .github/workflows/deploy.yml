@@ -218,6 +218,27 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify version advances latest tag
+        run: |
+          set -euo pipefail
+
+          current="v${{ steps.version.outputs.version }}"
+          latest=$(git tag -l 'v*' --sort=-version:refname | head -n1)
+
+          if [[ -z "$latest" ]]; then
+            echo "No previous release tag found; proceeding with $current."
+            exit 0
+          fi
+
+          highest=$(printf '%s\n%s\n' "$latest" "$current" | sort -V | tail -n1)
+          if [[ "$highest" != "$current" || "$latest" == "$current" ]]; then
+            echo "❌ Release version $current does not advance latest tag $latest."
+            echo "   Update Directory.Build.props before merging."
+            exit 1
+          fi
+
+          echo "✅ Release version $current advances latest tag $latest."
+
       - name: Build
         run: dotnet build pengdows.hangfire.slnx -c Release
 
