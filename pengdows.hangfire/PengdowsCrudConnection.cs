@@ -65,6 +65,15 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(parameters));
         }
 
+        return CreateExpiredJobAsync(job, parameters, createdAt, expireIn).GetAwaiter().GetResult();
+    }
+
+    private async Task<string> CreateExpiredJobAsync(
+        HangfireJob job,
+        IDictionary<string, string> parameters,
+        DateTime createdAt,
+        TimeSpan expireIn)
+    {
         var hfJob = new ModelJob
         {
             InvocationData = JsonHelper.Serialize(InvocationData.SerializeJob(job)),
@@ -73,14 +82,27 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             ExpireAt = createdAt.Add(expireIn)
         };
 
-        _storage.Jobs.CreateAsync(hfJob).GetAwaiter().GetResult();
+        var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
+            ? pengdows.crud.enums.IsolationProfile.StrictConsistency
+            : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
+        await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
+        try
+        {
+            await _storage.Jobs.CreateAsync(hfJob, tx);
+            foreach (var parameter in parameters)
+            {
+                await _storage.JobParameters.UpsertAsync(
+                    new JobParameter { JobID = hfJob.ID, Name = parameter.Key, Value = parameter.Value }, tx);
+            }
 
-        var paramTasks = parameters
-            .Select(p => _storage.JobParameters.UpsertAsync(new JobParameter { JobID = hfJob.ID, Name = p.Key, Value = p.Value }))
-            .ToArray();
-        foreach (var pt in paramTasks) pt.AsTask().Wait();
-
-        return hfJob.ID.ToString();
+            await tx.CommitAsync();
+            return hfJob.ID.ToString();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     public override void SetJobParameter(string jobId, string name, string value)

@@ -11,6 +11,7 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
     private readonly string _queue;
     private bool _disposed;
     private bool _removedFromQueue;
+    private bool _requeued;
 
     public PengdowsCrudFetchedJob(PengdowsCrudJobStorage storage, long jobId, string queue)
     {
@@ -24,7 +25,16 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
 
     public void RemoveFromQueue() => _removedFromQueue = true;
 
-    public void Requeue() { }
+    public void Requeue()
+    {
+        if (_disposed || _requeued)
+        {
+            return;
+        }
+
+        _storage.JobQueues.RequeueAsync(_jobId, _queue).GetAwaiter().GetResult();
+        _requeued = true;
+    }
 
     public void Dispose()
     {
@@ -39,7 +49,7 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
         {
             _storage.JobQueues.AcknowledgeAsync(_jobId, _queue).GetAwaiter().GetResult();
         }
-        else
+        else if (!_requeued)
         {
             _storage.JobQueues.RequeueAsync(_jobId, _queue).GetAwaiter().GetResult();
         }

@@ -86,13 +86,39 @@ public sealed class FetchedJobAndStorageTests
     }
 
     [Fact]
-    public void FetchedJob_Requeue_DoesNotSetRemoveFlag()
+    public void FetchedJob_Requeue_ImmediatelyClearsFetchedAt_AndIsIdempotent()
     {
         var (storage, factory) = CreateStorage();
         var job = new PengdowsCrudFetchedJob(storage, 1L, "q");
-        job.Requeue(); // Requeue() is currently a no-op implementation
-        job.Dispose(); // should fall through to RequeueAsync (UPDATE FetchedAt = NULL)
-        Assert.True(NonQueryContains(factory, "UPDATE"));
+        job.Requeue();
+
+        var updateCountAfterRequeue = factory.CreatedConnections
+            .SelectMany(c => c.ExecutedNonQueryTexts)
+            .Count(t => t.Contains("UPDATE", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, updateCountAfterRequeue);
+
+        job.Dispose();
+
+        var updateCountAfterDispose = factory.CreatedConnections
+            .SelectMany(c => c.ExecutedNonQueryTexts)
+            .Count(t => t.Contains("UPDATE", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, updateCountAfterDispose);
+    }
+
+    [Fact]
+    public void Storage_Initialize_WithAutoPrepareOnNonSqlServer_ThrowsClearError()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Sqlite);
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context, new PengdowsCrudStorageOptions
+        {
+            AutoPrepareSchema = true
+        });
+
+        var error = Assert.Throws<InvalidOperationException>(() => storage.Initialize());
+
+        Assert.Contains("SQL Server", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AutoPrepareSchema", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── PengdowsCrudJobStorage features ──────────────────────────────────────
