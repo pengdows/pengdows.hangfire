@@ -116,6 +116,8 @@ Transactions are handled by collecting `Func<IDatabaseContext, Task>` commands i
 
 For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema automatically on first use. Other providers require their provider-specific install script.
 
+Distributed locks guarantee a single current row owner. The `LeaseLost` property reports when renewal can no longer confirm ownership, but the `IDisposable` lock contract cannot cancel or stop code already running in the critical section. Long-running jobs should observe `LeaseLost` where possible and remain idempotent even if a lease expires.
+
 For manual schema management, two options are provided:
 
 - **`DefaultInstall.sql`** — SQL Server T-SQL dialect, ships with the package as an embedded resource

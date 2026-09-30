@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Concurrent;
+using System.Threading;
 using System.Threading.Tasks;
+using Hangfire;
+using pengdows.hangfire;
 using pengdows.hangfire.models;
 using Xunit;
 
@@ -17,6 +21,54 @@ public sealed class SqliteProviderFacts
     private readonly SqliteFixture _f;
 
     public SqliteProviderFacts(SqliteFixture fixture) => _f = fixture;
+
+    [Fact]
+    public async Task BackgroundJobServer_LongRunningFetchedJob_IsNotExecutedTwice()
+    {
+        var key = Guid.NewGuid().ToString("N");
+        var state = new BlockingJobState();
+        LongRunningIntegrationJob.States[key] = state;
+        var options = _f.Storage.Options;
+        options.InvisibilityTimeout = TimeSpan.FromSeconds(2);
+        options.QueuePollInterval = TimeSpan.FromMilliseconds(100);
+        options.QueuePollJitter = false;
+
+        try
+        {
+            var client = new BackgroundJobClient(_f.Storage);
+            var jobId = client.Enqueue(() => LongRunningIntegrationJob.Run(key));
+            var jobData = new PengdowsCrudConnection(_f.Storage).GetJobData(jobId);
+            Assert.NotNull(jobData);
+            Assert.NotNull(jobData!.InvocationData.DeserializeJob());
+            using var server = new BackgroundJobServer(new BackgroundJobServerOptions
+            {
+                WorkerCount = 1,
+                Queues = ["default"],
+                ShutdownTimeout = TimeSpan.FromSeconds(10)
+            }, _f.Storage);
+
+            if (!state.Started.Wait(TimeSpan.FromSeconds(10)))
+            {
+                Assert.Fail("Job did not start.");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            state.Release.Set();
+            Assert.True(state.Completed.Wait(TimeSpan.FromSeconds(10)), "Job did not complete.");
+            Assert.Equal(1, state.Invocations);
+        }
+        finally
+        {
+            LongRunningIntegrationJob.States.TryRemove(key, out _);
+        }
+    }
+
+    internal sealed class BlockingJobState
+    {
+        public int Invocations;
+        public ManualResetEventSlim Started { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+        public ManualResetEventSlim Completed { get; } = new();
+    }
 
     [Fact]
     public async Task Schema_UsesBareTables_AndStoresRowsInMainDatabase()
@@ -90,5 +142,20 @@ public sealed class SqliteProviderFacts
         var row = Assert.Single(rows);
         Assert.Equal("value", row.Value);
         Assert.Equal(9.75, row.Score, 5);
+    }
+}
+
+public static class LongRunningIntegrationJob
+{
+    internal static readonly ConcurrentDictionary<string, SqliteProviderFacts.BlockingJobState> States =
+        new();
+
+    public static void Run(string key)
+    {
+        var state = States[key];
+        Interlocked.Increment(ref state.Invocations);
+        state.Started.Set();
+        state.Release.Wait(TimeSpan.FromSeconds(15));
+        state.Completed.Set();
     }
 }

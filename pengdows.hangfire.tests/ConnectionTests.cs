@@ -541,6 +541,7 @@ public sealed class ConnectionTests
     [InlineData(SupportedDatabase.MySql, "UTC_TIMESTAMP")]
     [InlineData(SupportedDatabase.MariaDb, "UTC_TIMESTAMP")]
     [InlineData(SupportedDatabase.Oracle, "SYS_EXTRACT_UTC")]
+    [InlineData(SupportedDatabase.Sqlite, "STRFTIME")]
     public void GetUtcDateTime_UsesProviderUtcExpression(SupportedDatabase database, string expression)
     {
         var (storage, factory) = CreateStorage(database);

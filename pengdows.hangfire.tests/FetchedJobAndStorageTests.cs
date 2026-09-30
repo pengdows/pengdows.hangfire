@@ -121,6 +121,20 @@ public sealed class FetchedJobAndStorageTests
         Assert.Contains("AutoPrepareSchema", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Storage_Initialize_WithDefaultOptions_MigratesExistingSqlServerSchema()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Value"] = 1 } });
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context);
+
+        storage.Initialize();
+
+        var executed = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts).ToList();
+        Assert.NotEmpty(executed);
+    }
+
     // ── PengdowsCrudJobStorage features ──────────────────────────────────────
 
     [Fact]

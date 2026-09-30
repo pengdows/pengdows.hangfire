@@ -150,12 +150,15 @@ public abstract class ConnectionFacts<TFixture> where TFixture : StorageFixture
     public void GetUtcDateTime_ReturnsCurrentUtc()
     {
         using var conn = OpenConnection();
-        var before = DateTime.UtcNow.AddSeconds(-1);
+        // Some providers expose second-level precision and container clocks can
+        // differ slightly from the test process clock.
+        var before = DateTime.UtcNow.AddSeconds(-10);
         var dt = conn.GetUtcDateTime();
-        var after = DateTime.UtcNow.AddSeconds(1);
+        var after = DateTime.UtcNow.AddSeconds(10);
 
         Assert.Equal(DateTimeKind.Utc, dt.Kind);
-        Assert.True(dt >= before && dt <= after);
+        Assert.True(dt >= before && dt <= after,
+            $"Database time {dt:o} was outside process window {before:o}..{after:o}");
     }
 
     // ── GetAllItemsFromSet ────────────────────────────────────────────────────

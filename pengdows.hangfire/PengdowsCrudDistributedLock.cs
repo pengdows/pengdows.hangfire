@@ -1,6 +1,7 @@
 namespace pengdows.hangfire;
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Hangfire.Logging;
@@ -47,7 +48,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
         PengdowsCrudJobStorage storage, string resource, TimeSpan timeout)
     {
         var ownerId    = Guid.NewGuid().ToString("N");
-        var deadline   = DateTime.UtcNow + timeout;
+        var stopwatch  = Stopwatch.StartNew();
         var retryDelay = storage.Options.DistributedLockRetryDelay;
         var jitter     = storage.Options.DistributedLockRetryJitter;
 
@@ -61,7 +62,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
                 return (ownerId, 1, expiresAt);
             }
 
-            var remaining = deadline - DateTime.UtcNow;
+            var remaining = timeout - stopwatch.Elapsed;
             if (remaining <= TimeSpan.Zero)
             {
                 throw new DistributedLockTimeoutException(resource);

@@ -70,7 +70,18 @@ public sealed class PengdowsCrudJobStorage : JobStorage
 
     public void Initialize()
     {
-        if (Options.AutoPrepareSchema)
+        var shouldInstall = Options.AutoPrepareSchema;
+        if (!shouldInstall && DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
+        {
+            // The default is intentionally non-destructive for fresh databases,
+            // but existing SQL Server schemas still need embedded migrations.
+            using var sc = DatabaseContext.CreateSqlContainer(
+                "SELECT CASE WHEN EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES " +
+                "WHERE TABLE_SCHEMA = 'HangFire' AND TABLE_NAME = 'Schema') THEN 1 ELSE 0 END");
+            shouldInstall = sc.ExecuteScalarOrNullAsync<int?>().GetAwaiter().GetResult() == 1;
+        }
+
+        if (shouldInstall)
         {
             var installer = new PengdowsCrudSchemaInstaller(DatabaseContext);
             installer.InstallAsync().GetAwaiter().GetResult();

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Hangfire.Common;
 using Hangfire.Server;
 using Hangfire.Storage;
 using pengdows.hangfire.contracts;
@@ -77,7 +78,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
     {
         var hfJob = new ModelJob
         {
-            InvocationData = JsonHelper.Serialize(InvocationData.SerializeJob(job)),
+            InvocationData = InvocationData.SerializeJob(job).SerializePayload(),
             Arguments = JsonHelper.Serialize(job.Args),
             CreatedAt = createdAt,
             ExpireAt = createdAt.Add(expireIn)
@@ -157,23 +158,31 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(jobId));
         }
 
-        if (!long.TryParse(jobId, out var id))
-        {
-            return null!;
-        }
+        if (!long.TryParse(jobId, out var id)) return null!;
 
         var job = _storage.Jobs.RetrieveOneAsync(id).GetAwaiter().GetResult();
-        if (job == null)
-        {
-            return null!;
-        }
+        if (job == null) return null!;
 
-        var invocationData = JsonHelper.Deserialize<InvocationData>(job.InvocationData);
+        var invocationData = InvocationData.DeserializePayload(job.InvocationData);
+        invocationData.Arguments = job.Arguments;
+        HangfireJob? deserializedJob = null;
+        JobLoadException? loadException = null;
+        try
+        {
+            deserializedJob = invocationData.DeserializeJob();
+        }
+        catch (JobLoadException ex)
+        {
+            loadException = ex;
+        }
         return new JobData
         {
+            Job = deserializedJob,
             InvocationData = invocationData,
             CreatedAt = job.CreatedAt,
-            State = job.StateName
+            State = job.StateName,
+            LoadException = loadException,
+            ParametersSnapshot = _storage.JobParameters.GetAllForJobAsync(id).GetAwaiter().GetResult()
         };
     }
 
@@ -451,9 +460,17 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             pengdows.crud.enums.SupportedDatabase.MySql or
             pengdows.crud.enums.SupportedDatabase.MariaDb => "UTC_TIMESTAMP(6)",
             pengdows.crud.enums.SupportedDatabase.Oracle => "SYS_EXTRACT_UTC(SYSTIMESTAMP)",
+            pengdows.crud.enums.SupportedDatabase.Sqlite => "STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            pengdows.crud.enums.SupportedDatabase.Firebird => "CAST(CURRENT_TIMESTAMP AS TIMESTAMP)",
             _ => "CURRENT_TIMESTAMP"
         };
-        using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}");
+        var suffix = _storage.DatabaseContext.Product switch
+        {
+            pengdows.crud.enums.SupportedDatabase.Oracle => " FROM DUAL",
+            pengdows.crud.enums.SupportedDatabase.Firebird => " FROM RDB$DATABASE",
+            _ => string.Empty
+        };
+        using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}{suffix}");
         var value = sc.ExecuteScalarRequiredAsync<DateTime>().GetAwaiter().GetResult();
         return DateTime.SpecifyKind(value, DateTimeKind.Utc);
     }
