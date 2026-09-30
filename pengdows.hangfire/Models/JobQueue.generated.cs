@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Data;
 using pengdows.crud;
@@ -17,8 +18,11 @@ public partial class JobQueue
 
     [Column("Queue", DbType.String, 3)]
     [PrimaryKey(1)]
-    public string Queue { get; set; }
+    public string Queue { get; set; } = null!;
 
     [Column("FetchedAt", DbType.DateTime, 4)]
     public DateTime? FetchedAt { get; set; }
+
+    [Column("FetchToken", DbType.String, 5)]
+    public string? FetchToken { get; set; }
 }

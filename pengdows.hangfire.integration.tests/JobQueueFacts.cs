@@ -2,6 +2,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System;
 using System.Linq;
+using pengdows.hangfire;
 using pengdows.hangfire.models;
 using Xunit;
 
@@ -46,6 +47,50 @@ public abstract class JobQueueFacts<TFixture> where TFixture : StorageFixture
         var rows = await _f.Storage.JobQueues.GetWhereAsync("JobId", jobId);
         var jq = Assert.Single(rows);
         Assert.NotNull(jq.FetchedAt);
+        Assert.False(string.IsNullOrWhiteSpace(jq.FetchToken));
+    }
+
+    [Fact]
+    public async Task StaleClaim_CannotAcknowledgeOrRequeueNewerClaim()
+    {
+        var jobId = await _f.InsertJobAsync();
+        await _f.InsertJobQueueAsync(jobId, "fencedqueue");
+
+        var first = await _f.Storage.JobQueues.FetchNextJobAsync(["fencedqueue"], CancellationToken.None);
+        Assert.NotNull(first);
+
+        await _f.Storage.JobQueues.RequeueAsync(jobId, "fencedqueue", first!.Value.FetchToken);
+        var second = await _f.Storage.JobQueues.FetchNextJobAsync(["fencedqueue"], CancellationToken.None);
+        Assert.NotNull(second);
+        Assert.NotEqual(first.Value.FetchToken, second!.Value.FetchToken);
+
+        Assert.Equal(0, await _f.Storage.JobQueues.AcknowledgeAsync(jobId, "fencedqueue", first.Value.FetchToken));
+        Assert.Equal(0, await _f.Storage.JobQueues.RequeueAsync(jobId, "fencedqueue", first.Value.FetchToken));
+
+        var row = Assert.Single(await _f.Storage.JobQueues.GetWhereAsync("JobId", jobId));
+        Assert.Equal(second.Value.FetchToken, row.FetchToken);
+        Assert.NotNull(row.FetchedAt);
+
+        await _f.Storage.JobQueues.RequeueAsync(jobId, "fencedqueue", second.Value.FetchToken);
+    }
+
+    [Fact]
+    public async Task FetchedJob_RefreshesFetchedAtWhileRunning()
+    {
+        _f.Storage.Options.InvisibilityTimeout = TimeSpan.FromSeconds(3);
+        var jobId = await _f.InsertJobAsync();
+        await _f.InsertJobQueueAsync(jobId, "heartbeatqueue");
+        var claim = await _f.Storage.JobQueues.FetchNextJobAsync(["heartbeatqueue"], CancellationToken.None);
+        Assert.NotNull(claim);
+
+        using var fetched = new PengdowsCrudFetchedJob(
+            _f.Storage, jobId, "heartbeatqueue", claim!.Value.FetchToken);
+        var initial = Assert.Single(await _f.Storage.JobQueues.GetWhereAsync("JobId", jobId));
+        await Task.Delay(TimeSpan.FromMilliseconds(1400));
+        var refreshed = Assert.Single(await _f.Storage.JobQueues.GetWhereAsync("JobId", jobId));
+
+        Assert.True(refreshed.FetchedAt > initial.FetchedAt,
+            $"Expected heartbeat to advance FetchedAt; initial={initial.FetchedAt:o}, refreshed={refreshed.FetchedAt:o}");
     }
 
     [Fact]
@@ -213,4 +258,3 @@ public class TiDbJobQueueFacts : JobQueueFacts<TiDbFixture>
 {
     public TiDbJobQueueFacts(TiDbFixture fixture) : base(fixture) { }
 }
-

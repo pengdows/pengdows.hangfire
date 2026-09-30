@@ -9,6 +9,7 @@ using Hangfire.Storage;
 using pengdows.hangfire.contracts;
 using pengdows.hangfire.models;
 using pengdows.crud;
+using pengdows.crud.exceptions;
 
 public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IHangfireTransaction
 {
@@ -31,19 +32,29 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
         var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
             ? pengdows.crud.enums.IsolationProfile.StrictConsistency
             : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
-        await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
-        try
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            foreach (var command in _commands)
+            await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
+            try
             {
-                await command(tx);
+                foreach (var command in _commands)
+                {
+                    await command(tx);
+                }
+                await tx.CommitAsync();
+                return;
             }
-            await tx.CommitAsync();
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
+            catch (SerializationConflictException) when (attempt < maxAttempts)
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
+            }
+            catch
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                throw;
+            }
         }
     }
 

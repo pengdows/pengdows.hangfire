@@ -42,7 +42,7 @@ public sealed class StorageOptionsTests
 #pragma warning disable CS0618
         Assert.Equal("hangfire", opts.SchemaName);
 #pragma warning restore CS0618
-        Assert.True(opts.AutoPrepareSchema);
+        Assert.False(opts.AutoPrepareSchema);
         Assert.Equal(TimeSpan.FromSeconds(5), opts.QueuePollInterval);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.InvisibilityTimeout);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.DistributedLockTtl);

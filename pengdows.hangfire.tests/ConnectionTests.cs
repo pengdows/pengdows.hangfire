@@ -521,13 +521,39 @@ public sealed class ConnectionTests
     [Fact]
     public void GetUtcDateTime_ReturnsCurrentUtcWithinTolerance()
     {
-        using var conn = MakeConnection();
-        var before = DateTime.UtcNow;
+        var (storage, factory) = CreateStorage();
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Value"] = new DateTime(2030, 1, 2, 3, 4, 5, DateTimeKind.Unspecified) }
+        });
+        using var conn = new PengdowsCrudConnection(storage);
         var result = conn.GetUtcDateTime();
-        var after  = DateTime.UtcNow;
 
-        Assert.InRange(result, before.AddSeconds(-1), after.AddSeconds(1));
+        Assert.Equal(new DateTime(2030, 1, 2, 3, 4, 5, DateTimeKind.Utc), result);
         Assert.Equal(DateTimeKind.Utc, result.Kind);
+        Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
+            sql => sql.Contains("SYSUTCDATETIME", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(SupportedDatabase.SqlServer, "SYSUTCDATETIME")]
+    [InlineData(SupportedDatabase.PostgreSql, "AT TIME ZONE")]
+    [InlineData(SupportedDatabase.MySql, "UTC_TIMESTAMP")]
+    [InlineData(SupportedDatabase.MariaDb, "UTC_TIMESTAMP")]
+    [InlineData(SupportedDatabase.Oracle, "SYS_EXTRACT_UTC")]
+    public void GetUtcDateTime_UsesProviderUtcExpression(SupportedDatabase database, string expression)
+    {
+        var (storage, factory) = CreateStorage(database);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Value"] = DateTime.UtcNow }
+        });
+
+        using var conn = new PengdowsCrudConnection(storage);
+        _ = conn.GetUtcDateTime();
+
+        Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
+            sql => sql.Contains(expression, StringComparison.OrdinalIgnoreCase));
     }
 
     // ── CreateWriteTransaction / AcquireDistributedLock ───────────────────────

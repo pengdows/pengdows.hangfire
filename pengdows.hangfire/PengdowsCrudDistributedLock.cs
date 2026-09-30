@@ -18,6 +18,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
     private readonly TimeSpan _heartbeatInterval;
     private readonly Timer _heartbeat;
     private int _version;
+    private DateTime _lastConfirmedExpiry;
     private int _disposed;
     private volatile bool _leaseLost;
     private int _consecutiveRenewalFailures;
@@ -34,14 +35,15 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
         _ttl               = storage.Options.DistributedLockTtl;
         _heartbeatInterval = TimeSpan.FromTicks(_ttl.Ticks / 5);
 
-        var (ownerId, version) = AcquireAsync(storage, resource, timeout).GetAwaiter().GetResult();
+        var (ownerId, version, expiresAt) = AcquireAsync(storage, resource, timeout).GetAwaiter().GetResult();
         _ownerId = ownerId;
         _version = version;
+        _lastConfirmedExpiry = expiresAt;
 
         _heartbeat = new Timer(_ => { _ = RenewAsync(); }, null, _heartbeatInterval, Timeout.InfiniteTimeSpan);
     }
 
-    private static async Task<(string ownerId, int version)> AcquireAsync(
+    private static async Task<(string ownerId, int version, DateTime expiresAt)> AcquireAsync(
         PengdowsCrudJobStorage storage, string resource, TimeSpan timeout)
     {
         var ownerId    = Guid.NewGuid().ToString("N");
@@ -52,10 +54,11 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
         while (true)
         {
             var now     = DateTime.UtcNow;
-            var claimed = await storage.Locks.TryAcquireAsync(resource, ownerId, now + storage.Options.DistributedLockTtl, now);
+            var expiresAt = now + storage.Options.DistributedLockTtl;
+            var claimed = await storage.Locks.TryAcquireAsync(resource, ownerId, expiresAt, now);
             if (claimed)
             {
-                return (ownerId, 1);
+                return (ownerId, 1, expiresAt);
             }
 
             var remaining = deadline - DateTime.UtcNow;
@@ -89,18 +92,33 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
     {
         try
         {
+            var newExpiresAt = DateTime.UtcNow + _ttl;
             var renewed = await _gateway.TryRenewAsync(
-                _resource, _ownerId, _version, DateTime.UtcNow + _ttl);
+                _resource, _ownerId, _version, newExpiresAt);
 
             if (!renewed)
             {
-                _leaseLost = true;
-                Logger.WarnFormat("Distributed lock '{0}' lease lost — another worker may have taken it.", _resource);
-                return;
+                // A committed renewal can lose its acknowledgement. If the row
+                // still belongs to us, adopt its incremented CAS version.
+                var storedVersion = await _gateway.GetOwnedVersionAsync(_resource, _ownerId);
+                if (storedVersion.HasValue && storedVersion.Value != _version)
+                {
+                    _version = storedVersion.Value;
+                    _lastConfirmedExpiry = newExpiresAt;
+                    _consecutiveRenewalFailures = 0;
+                }
+                else
+                {
+                    MarkLeaseLost("another worker may have taken it");
+                    return;
+                }
             }
-
-            _consecutiveRenewalFailures = 0;
-            _version++;
+            else
+            {
+                _consecutiveRenewalFailures = 0;
+                _version++;
+                _lastConfirmedExpiry = DateTime.UtcNow + _ttl;
+            }
         }
         catch (Exception ex)
         {
@@ -114,12 +132,25 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
                 Logger.WarnException(
                     $"Repeated transient errors renewing lock '{_resource}' ({_consecutiveRenewalFailures} consecutive).", ex);
             }
+
+            if (DateTime.UtcNow >= _lastConfirmedExpiry)
+            {
+                MarkLeaseLost("the last confirmed lease expiry has passed");
+                return;
+            }
         }
 
         if (_disposed == 0)
         {
-            _heartbeat.Change(_heartbeatInterval, Timeout.InfiniteTimeSpan);
+            try { _heartbeat.Change(_heartbeatInterval, Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
         }
+    }
+
+    private void MarkLeaseLost(string reason)
+    {
+        _leaseLost = true;
+        Logger.WarnFormat("Distributed lock '{0}' lease lost — {1}.", _resource, reason);
     }
 
     public void Dispose()
@@ -129,7 +160,8 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
             return;
         }
 
-        _heartbeat.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        try { _heartbeat.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
+        catch (ObjectDisposedException) { }
         _heartbeat.Dispose();
 
         try

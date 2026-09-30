@@ -12,9 +12,15 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
 {
     public JobQueueGateway(IDatabaseContext context) : base(context) { }
 
-    public Task<int> AcknowledgeAsync(long jobId, string queue) => AcknowledgeAsync(jobId, queue, null);
+    public Task<int> AcknowledgeAsync(long jobId, string queue) => AcknowledgeAsync(jobId, queue, null, null);
 
-    public async Task<int> AcknowledgeAsync(long jobId, string queue, IDatabaseContext? context = null)
+    public Task<int> AcknowledgeAsync(long jobId, string queue, string fetchToken)
+        => AcknowledgeAsync(jobId, queue, fetchToken, null);
+
+    public Task<int> AcknowledgeAsync(long jobId, string queue, IDatabaseContext context)
+        => AcknowledgeAsync(jobId, queue, null, context);
+
+    private async Task<int> AcknowledgeAsync(long jobId, string queue, string? fetchToken, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
         await using var sc = ctx.CreateSqlContainer();
@@ -22,20 +28,53 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendAnd().AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
         sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NOT NULL");
+        if (fetchToken != null)
+        {
+            sc.AppendAnd().AppendName("FetchToken").AppendEquals()
+              .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
+        }
         return await sc.ExecuteNonQueryAsync();
     }
 
-    public Task<int> RequeueAsync(long jobId, string queue) => RequeueAsync(jobId, queue, null);
+    public Task<int> RequeueAsync(long jobId, string queue) => RequeueAsync(jobId, queue, null, null);
 
-    public async Task<int> RequeueAsync(long jobId, string queue, IDatabaseContext? context = null)
+    public Task<int> RequeueAsync(long jobId, string queue, string fetchToken)
+        => RequeueAsync(jobId, queue, fetchToken, null);
+
+    public Task<int> RequeueAsync(long jobId, string queue, IDatabaseContext context)
+        => RequeueAsync(jobId, queue, null, context);
+
+    private async Task<int> RequeueAsync(long jobId, string queue, string? fetchToken, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
-        sc.AppendName("FetchedAt").AppendQuery(" = NULL WHERE ");
+        sc.AppendName("FetchedAt").AppendQuery(" = NULL");
+        sc.AppendComma().AppendName("FetchToken").AppendQuery(" = NULL WHERE ");
         sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendAnd().AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
         sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NOT NULL");
+        if (fetchToken != null)
+        {
+            sc.AppendAnd().AppendName("FetchToken").AppendEquals()
+              .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
+        }
+        return await sc.ExecuteNonQueryAsync();
+    }
+
+    public async Task<int> KeepAliveAsync(long jobId, string queue, string fetchToken, IDatabaseContext? context = null)
+    {
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
+        sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
+        sc.AppendName("FetchedAt").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+        sc.AppendWhere();
+        sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
+        sc.AppendAnd().AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
+        sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NOT NULL");
+        sc.AppendAnd().AppendName("FetchToken").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
         return await sc.ExecuteNonQueryAsync();
     }
 
@@ -47,6 +86,7 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendQuery(" = NULL");
+        sc.AppendComma().AppendName("FetchToken").AppendQuery(" = NULL");
         sc.AppendWhere();
         sc.AppendName("FetchedAt").AppendQuery(" IS NOT NULL");
         sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" <= ")
@@ -85,10 +125,10 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return await LoadListAsync(sc);
     }
 
-    public Task<(long JobId, string Queue)?> FetchNextJobAsync(string[] queues, CancellationToken ct)
+    public Task<(long JobId, string Queue, string FetchToken)?> FetchNextJobAsync(string[] queues, CancellationToken ct)
         => FetchNextJobAsync(queues, ct, null);
 
-    public async Task<(long JobId, string Queue)?> FetchNextJobAsync(string[] queues, CancellationToken ct, IDatabaseContext? context = null)
+    public async Task<(long JobId, string Queue, string FetchToken)?> FetchNextJobAsync(string[] queues, CancellationToken ct, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
         foreach (var queue in queues)
@@ -112,9 +152,10 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
                 ct.ThrowIfCancellationRequested();
                 var id    = reader.GetInt64(0);
                 var jobId = reader.GetInt64(1);
-                if (await TryClaimAsync(id, queue, ct, ctx))
+                var fetchToken = Guid.NewGuid().ToString("N");
+                if (await TryClaimAsync(id, queue, fetchToken, ct, ctx))
                 {
-                    return (jobId, queue);
+                    return (jobId, queue, fetchToken);
                 }
             }
         }
@@ -122,13 +163,15 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return null;
     }
 
-    private async Task<bool> TryClaimAsync(long id, string queue, CancellationToken ct, IDatabaseContext? context = null)
+    private async Task<bool> TryClaimAsync(long id, string queue, string fetchToken, CancellationToken ct, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendEquals()
             .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+        sc.AppendComma().AppendName("FetchToken").AppendEquals()
+            .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
         sc.AppendWhere();
         sc.AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
         sc.AppendAnd().AppendName("Id").AppendEquals().AppendParam(sc.AddParameterWithValue("id", DbType.Int64, id));

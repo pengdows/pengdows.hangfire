@@ -17,5 +17,6 @@ public interface IDistributedLockGateway : ITableGateway<DistributedLockRecord, 
     Task<bool> TryAcquireAsync(string resource, string ownerId, DateTime expiresAt, DateTime asOf);
 
     Task<bool> TryRenewAsync(string resource, string ownerId, int expectedVersion, DateTime newExpiresAt);
+    Task<int?> GetOwnedVersionAsync(string resource, string ownerId, IDatabaseContext? context = null);
     Task ReleaseAsync(string resource, string ownerId);
 }

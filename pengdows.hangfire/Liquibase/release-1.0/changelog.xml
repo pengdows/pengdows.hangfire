@@ -255,4 +255,10 @@
         </createTable>
     </changeSet>
 
+    <changeSet id="13" author="pengdows">
+        <addColumn tableName="JobQueue" schemaName="HangFire">
+            <column name="FetchToken" type="nvarchar(64)"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

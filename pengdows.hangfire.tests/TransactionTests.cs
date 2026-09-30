@@ -6,6 +6,7 @@ using Hangfire.Storage;
 using pengdows.crud;
 using pengdows.crud.enums;
 using pengdows.crud.fakeDb;
+using pengdows.crud.exceptions;
 using Xunit;
 
 namespace pengdows.hangfire.tests;
@@ -488,7 +489,8 @@ public sealed class TransactionTests
         var storage = new PengdowsCrudJobStorage(ctx);
         using var tx = new PengdowsCrudWriteOnlyTransaction(storage);
         tx.IncrementCounter("k");
-        Assert.Throws<InvalidOperationException>(() => tx.Commit());
+        var error = Assert.Throws<TransactionException>(() => tx.Commit());
+        Assert.IsType<InvalidOperationException>(error.InnerException);
     }
 
     // ── AddJobState invalid ID short-circuit ──────────────────────────────────

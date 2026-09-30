@@ -8,6 +8,7 @@ using Hangfire.Server;
 using Hangfire.Storage;
 using pengdows.hangfire.contracts;
 using pengdows.hangfire.models;
+using pengdows.crud.exceptions;
 using HangfireJob = Hangfire.Common.Job;
 using ModelJob = pengdows.hangfire.models.Job;
 
@@ -40,7 +41,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
                 .GetAwaiter().GetResult();
             if (result.HasValue)
             {
-                return new PengdowsCrudFetchedJob(_storage, result.Value.JobId, result.Value.Queue);
+                return new PengdowsCrudFetchedJob(_storage, result.Value.JobId, result.Value.Queue, result.Value.FetchToken);
             }
 
             var wait = _storage.Options.QueuePollJitter
@@ -85,24 +86,35 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
         var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
             ? pengdows.crud.enums.IsolationProfile.StrictConsistency
             : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
-        await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
-        try
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            await _storage.Jobs.CreateAsync(hfJob, tx);
-            foreach (var parameter in parameters)
+            await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
+            try
             {
-                await _storage.JobParameters.UpsertAsync(
-                    new JobParameter { JobID = hfJob.ID, Name = parameter.Key, Value = parameter.Value }, tx);
-            }
+                await _storage.Jobs.CreateAsync(hfJob, tx);
+                foreach (var parameter in parameters)
+                {
+                    await _storage.JobParameters.UpsertAsync(
+                        new JobParameter { JobID = hfJob.ID, Name = parameter.Key, Value = parameter.Value }, tx);
+                }
 
-            await tx.CommitAsync();
-            return hfJob.ID.ToString();
+                await tx.CommitAsync();
+                return hfJob.ID.ToString();
+            }
+            catch (SerializationConflictException) when (attempt < maxAttempts)
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
+            }
+            catch
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                throw;
+            }
         }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
+
+        throw new InvalidOperationException("Job creation transaction exhausted its serialization retries.");
     }
 
     public override void SetJobParameter(string jobId, string name, string value)
@@ -430,7 +442,21 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
         return _storage.Lists.GetAllAsync(key).GetAwaiter().GetResult();
     }
 
-    public override DateTime GetUtcDateTime() => DateTime.UtcNow;
+    public override DateTime GetUtcDateTime()
+    {
+        var nowExpression = _storage.DatabaseContext.Product switch
+        {
+            pengdows.crud.enums.SupportedDatabase.SqlServer => "SYSUTCDATETIME()",
+            pengdows.crud.enums.SupportedDatabase.PostgreSql => "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
+            pengdows.crud.enums.SupportedDatabase.MySql or
+            pengdows.crud.enums.SupportedDatabase.MariaDb => "UTC_TIMESTAMP(6)",
+            pengdows.crud.enums.SupportedDatabase.Oracle => "SYS_EXTRACT_UTC(SYSTIMESTAMP)",
+            _ => "CURRENT_TIMESTAMP"
+        };
+        using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}");
+        var value = sc.ExecuteScalarRequiredAsync<DateTime>().GetAwaiter().GetResult();
+        return DateTime.SpecifyKind(value, DateTimeKind.Utc);
+    }
 
     /// <summary>
     /// Returns a wait duration sampled uniformly from [base/2, base*3/2].

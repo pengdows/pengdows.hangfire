@@ -295,6 +295,19 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
         return await sc.ExecuteNonQueryAsync() == 1;
     }
 
+    public async Task<int?> GetOwnedVersionAsync(string resource, string ownerId, IDatabaseContext? context = null)
+    {
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
+        sc.AppendQuery("SELECT ").AppendName("version").AppendQuery(" FROM ")
+          .AppendQuery(WrappedTableName).AppendWhere();
+        sc.AppendName("resource").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("lockRes", DbType.String, resource));
+        sc.AppendAnd().AppendName("owner_id").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("ownerId", DbType.String, ownerId));
+        return await sc.ExecuteScalarOrNullAsync<int?>();
+    }
+
     // ── Release ───────────────────────────────────────────────────────────────
 
     public Task ReleaseAsync(string resource, string ownerId) => ReleaseAsync(resource, ownerId, null);

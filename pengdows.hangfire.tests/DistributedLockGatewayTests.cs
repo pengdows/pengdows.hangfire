@@ -193,6 +193,21 @@ public sealed class DistributedLockGatewayTests
     }
 
     [Fact]
+    public async Task GetOwnedVersionAsync_QueriesByResourceAndOwner()
+    {
+        var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Value"] = 7 } });
+        await using (ctx)
+        {
+            var version = await new DistributedLockGateway(ctx).GetOwnedVersionAsync("res", "owner");
+            Assert.Equal(7, version);
+            Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
+                s => s.Contains("owner_id", StringComparison.OrdinalIgnoreCase)
+                  && s.Contains("resource", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
     public async Task ReleaseAsync_UsesDeleteWithOwnerGuard()
     {
         var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);

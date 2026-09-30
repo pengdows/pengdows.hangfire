@@ -6,6 +6,7 @@ using pengdows.crud;
 using pengdows.crud.enums;
 using pengdows.crud.exceptions;
 using pengdows.crud.fakeDb;
+using pengdows.hangfire.gateways;
 using Xunit;
 
 namespace pengdows.hangfire.tests;
@@ -181,6 +182,65 @@ public sealed class DistributedLockTests
         await (Task)renewMethod.Invoke(lk, null)!;  // must not throw
 
         Assert.False(lk.LeaseLost);
+    }
+
+    [Fact]
+    public async Task RenewAsync_WhenTransientFailurePassesConfirmedExpiry_SetsLeaseLost()
+    {
+        var (storage, factory) = CreateStorage();
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-expired", TimeSpan.FromSeconds(30));
+
+        typeof(PengdowsCrudDistributedLock)
+            .GetField("_lastConfirmedExpiry", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(lk, DateTime.UtcNow.AddSeconds(-1));
+        var conn = new fakeDbConnection();
+        conn.SetNonQueryExecuteException(new Exception("db unavailable"));
+        factory.Connections.Insert(0, conn);
+
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;
+
+        Assert.True(lk.LeaseLost);
+    }
+
+    [Fact]
+    public async Task RenewAsync_WhenCasAcknowledgementIsLost_AdoptsStoredVersion()
+    {
+        var (storage, _) = CreateStorage();
+        ReplaceLockGateway(storage, DispatchProxy.Create<IDistributedLockGateway, AmbiguousRenewGateway>());
+        using var lk = new PengdowsCrudDistributedLock(storage, "renew-ambiguous", TimeSpan.FromSeconds(30));
+
+        var renewMethod = typeof(PengdowsCrudDistributedLock)
+            .GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)renewMethod.Invoke(lk, null)!;
+
+        Assert.False(lk.LeaseLost);
+        Assert.Equal(2, typeof(PengdowsCrudDistributedLock)
+            .GetField("_version", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(lk));
+    }
+
+    private static void ReplaceLockGateway(PengdowsCrudJobStorage storage, IDistributedLockGateway gateway)
+    {
+        typeof(PengdowsCrudJobStorage).GetField("<Locks>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(storage, gateway);
+    }
+
+    private class AmbiguousRenewGateway : DispatchProxy
+    {
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method?.Name == nameof(IDistributedLockGateway.TryAcquireAsync))
+                return Task.FromResult(true);
+            if (method?.Name == nameof(IDistributedLockGateway.TryRenewAsync))
+                return Task.FromResult(false);
+            if (method?.Name == nameof(IDistributedLockGateway.GetOwnedVersionAsync))
+                return Task.FromResult<int?>(2);
+            if (method?.ReturnType == typeof(Task))
+                return Task.CompletedTask;
+            return null;
+        }
     }
 
     [Fact]

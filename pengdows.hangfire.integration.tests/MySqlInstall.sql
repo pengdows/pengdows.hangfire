@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS `JobQueue` (
     `JobId`     BIGINT NOT NULL,
     `Queue`     VARCHAR(50) NOT NULL,
     `FetchedAt` DATETIME(6),
+    `FetchToken` VARCHAR(64),
     PRIMARY KEY (`Id`)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS `Server` (

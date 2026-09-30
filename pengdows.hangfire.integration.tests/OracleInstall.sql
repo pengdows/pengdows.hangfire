@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS "JobQueue" (
     "JobId"     NUMBER(19) NOT NULL,
     "Queue"     VARCHAR2(50) NOT NULL,
     "FetchedAt" TIMESTAMP WITH TIME ZONE,
+    "FetchToken" VARCHAR2(64),
     CONSTRAINT "PK_HangFire_JobQueue" PRIMARY KEY ("Id"));
 CREATE TABLE IF NOT EXISTS "Server" (
     "Id"            VARCHAR2(200) NOT NULL,

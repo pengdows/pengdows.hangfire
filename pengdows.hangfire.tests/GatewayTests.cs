@@ -608,6 +608,18 @@ public sealed class GatewayTests
     }
 
     [Fact]
+    public async Task JobQueue_AcknowledgeAsync_WithToken_FencesDelete()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).AcknowledgeAsync(42L, "default", "claim-token");
+            var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
+            Assert.Contains(sql, s => s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
     public async Task JobQueue_RequeueAsync_SetsNullFetchedAt()
     {
         var (ctx, factory) = MakeContext();
@@ -616,6 +628,31 @@ public sealed class GatewayTests
             await new JobQueueGateway(ctx).RequeueAsync(42L, "default");
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "NULL"));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_RequeueAsync_WithToken_FencesUpdate()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).RequeueAsync(42L, "default", "claim-token");
+            var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
+            Assert.Contains(sql, s => s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_KeepAliveAsync_UpdatesFetchedAtWithTokenFence()
+    {
+        var (ctx, factory) = MakeContext();
+        await using (ctx)
+        {
+            await new JobQueueGateway(ctx).KeepAliveAsync(42L, "default", "claim-token");
+            var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
+            Assert.Contains(sql, s => s.Contains("FetchedAt", StringComparison.OrdinalIgnoreCase)
+                                   && s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -695,6 +732,9 @@ public sealed class GatewayTests
             Assert.NotNull(result);
             Assert.Equal(42L, result!.Value.JobId);
             Assert.Equal("default", result.Value.Queue);
+            Assert.False(string.IsNullOrWhiteSpace(result.Value.FetchToken));
+            Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts),
+                s => s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -1262,6 +1302,7 @@ public sealed class GatewayTests
             await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
             Assert.True(NonQueryContains(factory, "FetchedAt"));
             Assert.True(NonQueryContains(factory, "NULL"));
+            Assert.True(NonQueryContains(factory, "FetchToken"));
         }
     }
 

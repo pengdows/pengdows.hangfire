@@ -96,7 +96,7 @@ return await sc.ExecuteNonQueryAsync();
 ```csharp
 GlobalConfiguration.Configuration
     .UsePengdowsCrudStorage(databaseContext, options => {
-        options.AutoPrepareSchema = true;
+        options.AutoPrepareSchema = true; // SQL Server only
         options.QueuePollInterval = TimeSpan.FromSeconds(5);
     });
 ```

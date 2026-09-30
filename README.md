@@ -70,12 +70,12 @@ IDatabaseContext databaseContext = new DatabaseContext(
 GlobalConfiguration.Configuration
     .UsePengdowsCrudStorage(databaseContext, options =>
     {
-        options.AutoPrepareSchema = true;
+        options.AutoPrepareSchema = true; // SQL Server only
         options.QueuePollInterval = TimeSpan.FromSeconds(5);
     });
 ```
 
-`AutoPrepareSchema = true` (the default) creates all required tables on first run. Set it to `false` if you manage schema migrations yourself.
+`AutoPrepareSchema = true` creates the required SQL Server tables on first run. It defaults to `false`; install the provider-specific schema script for other databases or when managing migrations yourself.
 On schema-capable databases, `pengdows.hangfire` always uses the built-in `HangFire` schema. Custom schema names are not supported.
 
 ## Configuration
@@ -85,7 +85,7 @@ All options are set via `PengdowsCrudStorageOptions`:
 | Option                        | Default    | Description                                                         |
 |-------------------------------|------------|---------------------------------------------------------------------|
 | `SchemaName`                  | `hangfire` | Obsolete and ignored. Custom database schemas are not supported     |
-| `AutoPrepareSchema`           | `true`     | Create schema tables on initialization if they do not exist         |
+| `AutoPrepareSchema`           | `false`    | Create the SQL Server schema on initialization                      |
 | `QueuePollInterval`           | 5 sec      | How long a worker waits between queue polls when idle               |
 | `QueuePollJitter`             | `true`     | Randomize poll sleep to prevent thundering-herd on idle queues      |
 | `JobExpirationCheckInterval`  | 30 min     | How often the expiration manager purges expired jobs                |
@@ -114,7 +114,7 @@ Transactions are handled by collecting `Func<IDatabaseContext, Task>` commands i
 
 ## Schema Management
 
-By default (`AutoPrepareSchema = true`) the schema is installed automatically on first use.
+For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema automatically on first use. Other providers require their provider-specific install script.
 
 For manual schema management, two options are provided:
 

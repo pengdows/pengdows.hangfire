@@ -18,7 +18,7 @@ SET NOCOUNT ON
 SET XACT_ABORT ON
 DECLARE @TARGET_SCHEMA_VERSION INT;
 DECLARE @DISABLE_HEAVY_MIGRATIONS BIT;
-SET @TARGET_SCHEMA_VERSION = 10;
+SET @TARGET_SCHEMA_VERSION = 11;
 --SET @DISABLE_HEAVY_MIGRATIONS = 1;
 
 PRINT 'Installing Hangfire SQL objects...';
@@ -150,6 +150,7 @@ BEGIN
         [JobId] [int] NOT NULL,
         [Queue] [nvarchar](20) NOT NULL,
         [FetchedAt] [datetime] NULL,
+        [FetchToken] [nvarchar](64) NULL,
             
         CONSTRAINT [PK_HangFire_JobQueue] PRIMARY KEY CLUSTERED ([Id] ASC)
     );
@@ -789,6 +790,20 @@ BEGIN
 	SET @CURRENT_SCHEMA_VERSION = 10;
 END
 
+IF @CURRENT_SCHEMA_VERSION = 10
+BEGIN
+	PRINT 'Installing schema version 11';
+
+	IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = 'HangFire' AND TABLE_NAME = 'JobQueue' AND COLUMN_NAME = 'FetchToken')
+	BEGIN
+		ALTER TABLE [HangFire].[JobQueue] ADD [FetchToken] NVARCHAR(64) NULL;
+		PRINT 'Added [HangFire].[JobQueue].[FetchToken]';
+	END
+
+	SET @CURRENT_SCHEMA_VERSION = 11;
+END
+
 UPDATE [HangFire].[Schema] SET [Version] = @CURRENT_SCHEMA_VERSION
 IF @@ROWCOUNT = 0 
 	INSERT INTO [HangFire].[Schema] ([Version]) VALUES (@CURRENT_SCHEMA_VERSION)        
@@ -797,4 +812,3 @@ PRINT 'Hangfire database schema installed';
 
 COMMIT TRANSACTION;
 PRINT 'Hangfire SQL objects installed';
-

@@ -22,4 +22,7 @@ public partial class JobQueue
 
     [Column("FetchedAt", DbType.DateTime, 4)]
     public DateTime? FetchedAt { get; set; }
+
+    [Column("FetchToken", DbType.String, 5)]
+    public string? FetchToken { get; set; }
 }

@@ -33,6 +33,7 @@ CREATE TABLE "JobQueue" (
     "JobId"     BIGINT NOT NULL,
     "Queue"     VARCHAR(50) NOT NULL,
     "FetchedAt" TIMESTAMP,
+    "FetchToken" VARCHAR(64),
     CONSTRAINT "PK_HangFire_JobQueue" PRIMARY KEY ("Id"));
 CREATE TABLE "Server" (
     "Id"            VARCHAR(200) NOT NULL,
