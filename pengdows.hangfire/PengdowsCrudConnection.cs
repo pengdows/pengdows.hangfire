@@ -461,7 +461,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             pengdows.crud.enums.SupportedDatabase.MariaDb => "UTC_TIMESTAMP(6)",
             pengdows.crud.enums.SupportedDatabase.Oracle => "SYS_EXTRACT_UTC(SYSTIMESTAMP)",
             pengdows.crud.enums.SupportedDatabase.Sqlite => "STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            pengdows.crud.enums.SupportedDatabase.Firebird => "CAST(CURRENT_TIMESTAMP AS TIMESTAMP)",
+            pengdows.crud.enums.SupportedDatabase.Firebird => "CAST(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS TIMESTAMP)",
             _ => "CURRENT_TIMESTAMP"
         };
         var suffix = _storage.DatabaseContext.Product switch
@@ -472,7 +472,9 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
         };
         using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}{suffix}");
         var value = sc.ExecuteScalarRequiredAsync<DateTime>().GetAwaiter().GetResult();
-        return DateTime.SpecifyKind(value, DateTimeKind.Utc);
+        return value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
     }
 
     /// <summary>

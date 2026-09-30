@@ -135,6 +135,21 @@ public sealed class FetchedJobAndStorageTests
         Assert.NotEmpty(executed);
     }
 
+    [Fact]
+    public void Storage_Initialize_WithExplicitOptOut_DoesNotInspectOrInstallSchema()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context, new PengdowsCrudStorageOptions
+        {
+            AutoPrepareSchema = false
+        });
+
+        storage.Initialize();
+
+        Assert.Empty(factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts));
+    }
+
     // ── PengdowsCrudJobStorage features ──────────────────────────────────────
 
     [Fact]
@@ -223,7 +238,7 @@ public sealed class FetchedJobAndStorageTests
 #pragma warning disable CS0618
         Assert.Equal("hangfire", opts.SchemaName);
 #pragma warning restore CS0618
-        Assert.False(opts.AutoPrepareSchema);
+        Assert.Null(opts.AutoPrepareSchema);
         Assert.Equal(TimeSpan.FromSeconds(5), opts.QueuePollInterval);
         Assert.Equal(TimeSpan.FromMinutes(30), opts.JobExpirationCheckInterval);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.CountersAggregateInterval);

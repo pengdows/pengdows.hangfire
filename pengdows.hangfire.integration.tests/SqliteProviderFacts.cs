@@ -42,7 +42,7 @@ public sealed class SqliteProviderFacts
             Assert.NotNull(jobData!.InvocationData.DeserializeJob());
             using var server = new BackgroundJobServer(new BackgroundJobServerOptions
             {
-                WorkerCount = 1,
+                WorkerCount = 2,
                 Queues = ["default"],
                 ShutdownTimeout = TimeSpan.FromSeconds(10)
             }, _f.Storage);
@@ -51,7 +51,12 @@ public sealed class SqliteProviderFacts
             {
                 Assert.Fail("Job did not start.");
             }
-            await Task.Delay(TimeSpan.FromSeconds(4));
+            var initialQueueRow = Assert.Single(await _f.Storage.JobQueues.GetWhereAsync("JobId", long.Parse(jobId)));
+            Assert.NotNull(initialQueueRow.FetchToken);
+            await Task.Delay(TimeSpan.FromSeconds(7));
+            var activeQueueRow = Assert.Single(await _f.Storage.JobQueues.GetWhereAsync("JobId", long.Parse(jobId)));
+            Assert.Equal(initialQueueRow.FetchToken, activeQueueRow.FetchToken);
+            Assert.Equal(1, state.Invocations);
             state.Release.Set();
             Assert.True(state.Completed.Wait(TimeSpan.FromSeconds(10)), "Job did not complete.");
             Assert.Equal(1, state.Invocations);

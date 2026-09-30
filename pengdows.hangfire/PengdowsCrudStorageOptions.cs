@@ -10,10 +10,12 @@ public sealed class PengdowsCrudStorageOptions
     public string SchemaName { get; set; } = "hangfire";
     /// <summary>
     /// When true, install the embedded SQL Server schema during initialization.
-    /// Other providers require their provider-specific install script and must
-    /// therefore leave this disabled.
+    /// When false, never install or migrate the schema. When null, existing
+    /// SQL Server schemas are migrated automatically; fresh databases require
+    /// setting this to true. Other providers require their provider-specific
+    /// install script.
     /// </summary>
-    public bool AutoPrepareSchema { get; set; } = false;
+    public bool? AutoPrepareSchema { get; set; }
     public TimeSpan QueuePollInterval { get; set; } = TimeSpan.FromSeconds(5);
     public TimeSpan InvisibilityTimeout { get; set; } = TimeSpan.FromMinutes(5);
     public TimeSpan DistributedLockRetryDelay { get; set; } = TimeSpan.FromMilliseconds(100);

@@ -75,7 +75,7 @@ GlobalConfiguration.Configuration
     });
 ```
 
-`AutoPrepareSchema = true` creates the required SQL Server tables on first run. It defaults to `false`; install the provider-specific schema script for other databases or when managing migrations yourself.
+`AutoPrepareSchema = true` creates the required SQL Server tables on first run. The default `null` value migrates an existing SQL Server schema but does not create a fresh one; set `false` to opt out completely. Install the provider-specific schema script for other databases or when managing migrations yourself.
 On schema-capable databases, `pengdows.hangfire` always uses the built-in `HangFire` schema. Custom schema names are not supported.
 
 ## Configuration
@@ -85,7 +85,7 @@ All options are set via `PengdowsCrudStorageOptions`:
 | Option                        | Default    | Description                                                         |
 |-------------------------------|------------|---------------------------------------------------------------------|
 | `SchemaName`                  | `hangfire` | Obsolete and ignored. Custom database schemas are not supported     |
-| `AutoPrepareSchema`           | `false`    | Create the SQL Server schema on initialization                      |
+| `AutoPrepareSchema`           | `null`     | Create or migrate the SQL Server schema on initialization           |
 | `QueuePollInterval`           | 5 sec      | How long a worker waits between queue polls when idle               |
 | `QueuePollJitter`             | `true`     | Randomize poll sleep to prevent thundering-herd on idle queues      |
 | `JobExpirationCheckInterval`  | 30 min     | How often the expiration manager purges expired jobs                |
@@ -114,7 +114,9 @@ Transactions are handled by collecting `Func<IDatabaseContext, Task>` commands i
 
 ## Schema Management
 
-For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema automatically on first use. Other providers require their provider-specific install script.
+For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema automatically on first use. The default `null` value migrates an existing schema while leaving a fresh database untouched; set `false` to disable all schema writes. Other providers require their provider-specific install script.
+
+The 2.0.6 release also corrects a pre-existing Hangfire compatibility defect in `GetJobData`: older 1.0 and 2.0.x builds returned invocation metadata without the deserialized `Job`, so server workers could dequeue jobs and then fail them as null jobs. Existing queued rows are compatible; no data migration is required.
 
 Distributed locks guarantee a single current row owner. The `LeaseLost` property reports when renewal can no longer confirm ownership, but the `IDisposable` lock contract cannot cancel or stop code already running in the critical section. Long-running jobs should observe `LeaseLost` where possible and remain idempotent even if a lease expires.
 

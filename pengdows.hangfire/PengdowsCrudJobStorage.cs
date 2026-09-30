@@ -70,8 +70,8 @@ public sealed class PengdowsCrudJobStorage : JobStorage
 
     public void Initialize()
     {
-        var shouldInstall = Options.AutoPrepareSchema;
-        if (!shouldInstall && DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
+        var shouldInstall = Options.AutoPrepareSchema == true;
+        if (Options.AutoPrepareSchema is null && DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
         {
             // The default is intentionally non-destructive for fresh databases,
             // but existing SQL Server schemas still need embedded migrations.

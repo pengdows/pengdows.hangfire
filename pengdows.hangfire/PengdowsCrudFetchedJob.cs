@@ -4,9 +4,11 @@ using System;
 using Hangfire.Storage;
 using System.Threading;
 using System.Threading.Tasks;
+using Hangfire.Logging;
 
 public sealed class PengdowsCrudFetchedJob : IFetchedJob
 {
+    private static readonly ILog Logger = LogProvider.For<PengdowsCrudFetchedJob>();
     private readonly PengdowsCrudJobStorage _storage;
     private readonly long _jobId;
     private readonly string _jobIdString;
@@ -92,7 +94,11 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
         {
             var updated = await _storage.JobQueues.KeepAliveAsync(_jobId, _queue, _fetchToken);
             if (updated == 0)
+            {
                 _keepAlive?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                Logger.WarnFormat("Keep-alive lost claim for job {0} on queue '{1}'.", _jobId, _queue);
+                return;
+            }
         }
         catch (Exception)
         {
