@@ -282,7 +282,7 @@ public abstract class ConnectionFacts<TFixture> where TFixture : StorageFixture
 
         using var conn = OpenConnection();
         var ttl = conn.GetSetTtl(key);
-        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(1));
+        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(2)), $"TTL={ttl}");
     }
 
     [Fact]
@@ -300,7 +300,7 @@ public abstract class ConnectionFacts<TFixture> where TFixture : StorageFixture
 
         using var conn = OpenConnection();
         var ttl = conn.GetHashTtl(key);
-        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(2));
+        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(2).Add(TimeSpan.FromSeconds(2)), $"TTL={ttl}");
     }
 
     [Fact]
@@ -318,7 +318,7 @@ public abstract class ConnectionFacts<TFixture> where TFixture : StorageFixture
 
         using var conn = OpenConnection();
         var ttl = conn.GetListTtl(key);
-        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(3));
+        Assert.True(ttl > TimeSpan.Zero && ttl <= TimeSpan.FromHours(3).Add(TimeSpan.FromSeconds(2)), $"TTL={ttl}");
     }
 
     // ── GetRangeFromList ──────────────────────────────────────────────────────

@@ -25,9 +25,21 @@ public sealed class FetchedJobWatchdog : IBackgroundProcess
 
     internal void RunOnce()
     {
-        var cutoff = DateTime.UtcNow - _storage.Options.InvisibilityTimeout;
+        var cutoff = _storage.Clock.UtcNow - _storage.Options.InvisibilityTimeout;
         try
         {
+            try
+            {
+                var unfenced = _storage.JobQueues.CountUnfencedFetchedAsync().GetAwaiter().GetResult();
+                if (unfenced > 0)
+                {
+                    Logger.WarnFormat("Detected {0} fetched job(s) without a fetch token; a pre-2.0.6 server is fetching jobs from this storage; upgrade all servers.", unfenced);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.DebugException("Unable to inspect for pre-2.0.6 fetched jobs.", ex);
+            }
             var requeued = _storage.JobQueues.RequeueStaleAsync(cutoff).GetAwaiter().GetResult();
             if (requeued > 0)
             {

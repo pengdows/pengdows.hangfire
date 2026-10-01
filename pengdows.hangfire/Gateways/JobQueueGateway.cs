@@ -10,7 +10,9 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGateway
 {
-    public JobQueueGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+    public JobQueueGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
+        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
 
     public Task<int> AcknowledgeAsync(long jobId, string queue) => AcknowledgeAsync(jobId, queue, null, null);
 
@@ -68,7 +70,7 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendEquals()
-          .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+          .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendWhere();
         sc.AppendName("JobId").AppendEquals().AppendParam(sc.AddParameterWithValue("jobId", DbType.Int64, jobId));
         sc.AppendAnd().AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
@@ -92,6 +94,16 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" <= ")
           .AppendParam(sc.AddParameterWithValue("cutoff", DbType.DateTime, cutoff));
         return await sc.ExecuteNonQueryAsync();
+    }
+
+    public async Task<int> CountUnfencedFetchedAsync(IDatabaseContext? context = null)
+    {
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
+        sc.AppendQuery("SELECT COUNT(*) FROM ").AppendQuery(WrappedTableName).AppendWhere();
+        sc.AppendName("FetchedAt").AppendQuery(" IS NOT NULL");
+        sc.AppendAnd().AppendName("FetchToken").AppendQuery(" IS NULL");
+        return await sc.ExecuteScalarRequiredAsync<int>();
     }
 
     public Task<List<string>> GetDistinctQueuesAsync() => GetDistinctQueuesAsync(null);
@@ -169,7 +181,7 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("FetchedAt").AppendEquals()
-            .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+            .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendComma().AppendName("FetchToken").AppendEquals()
             .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
         sc.AppendWhere();

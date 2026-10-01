@@ -76,20 +76,19 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
         DateTime createdAt,
         TimeSpan expireIn)
     {
-        var hfJob = new ModelJob
-        {
-            InvocationData = InvocationData.SerializeJob(job).SerializePayload(),
-            Arguments = JsonHelper.Serialize(job.Args),
-            CreatedAt = createdAt,
-            ExpireAt = createdAt.Add(expireIn)
-        };
-
         var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
             ? pengdows.crud.enums.IsolationProfile.StrictConsistency
             : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            var hfJob = new ModelJob
+            {
+                InvocationData = InvocationData.SerializeJob(job).SerializePayload(),
+                Arguments = JsonHelper.Serialize(job.Args),
+                CreatedAt = createdAt,
+                ExpireAt = createdAt.Add(expireIn)
+            };
             await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
             try
             {
@@ -254,7 +253,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(context));
         }
 
-        var now = DateTime.UtcNow;
+        var now = _storage.Clock.UtcNow;
         _storage.Servers.UpsertAsync(new Server
         {
             ID = serverId,
@@ -285,7 +284,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
 
     public override int RemoveTimedOutServers(TimeSpan timeOut)
     {
-        var cutoff = DateTime.UtcNow.Subtract(timeOut);
+        var cutoff = _storage.Clock.UtcNow.Subtract(timeOut);
         return _storage.Servers.RemoveTimedOutAsync(cutoff).GetAwaiter().GetResult();
     }
 
@@ -452,6 +451,9 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
     }
 
     public override DateTime GetUtcDateTime()
+        => _storage.Clock.UtcNow;
+
+    internal DateTime ReadDatabaseUtcNow()
     {
         var nowExpression = _storage.DatabaseContext.Product switch
         {

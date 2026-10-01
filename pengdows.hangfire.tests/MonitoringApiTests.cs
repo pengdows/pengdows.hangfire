@@ -568,6 +568,9 @@ public sealed class MonitoringApiTests
     public void SucceededByDatesCount_WithMatchingKey_ReturnsValue()
     {
         var (api, factory) = CreateApi();
+        var storage = (PengdowsCrudJobStorage)typeof(PengdowsCrudMonitoringApi)
+            .GetField("_storage", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(api)!;
+        _ = storage.Clock.UtcNow;
         // Use today's key so counts.TryGetValue returns true (the key-found branch)
         var todayKey = $"stats:succeeded:{DateTime.UtcNow.Date:yyyy-MM-dd}";
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> {

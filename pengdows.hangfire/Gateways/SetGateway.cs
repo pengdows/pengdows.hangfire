@@ -6,7 +6,9 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
 {
-    public SetGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+    public SetGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
+        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
 
     public Task<HashSet<string>> GetAllItemsAsync(string key) => GetAllItemsAsync(key, null);
 
@@ -102,7 +104,7 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
         var expiry = result.Value.Kind == DateTimeKind.Local
             ? result.Value.ToUniversalTime()
             : DateTime.SpecifyKind(result.Value, DateTimeKind.Utc);
-        return expiry - DateTime.UtcNow;
+        return expiry - _utcNow();
     }
 
     public async Task<int> UpdateExpireAtAsync(string key, DateTime? expireAt, IDatabaseContext? context = null)
@@ -133,7 +135,7 @@ public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
         var ctx = context ?? Context;
         var sc = BuildBaseRetrieve("s", ctx);
         sc.AppendWhere();
-        sc.AppendName("s.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+        sc.AppendName("s.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendQuery(" ORDER BY ").AppendName("s.Key").AppendQuery(", ").AppendName("s.Value").AppendQuery(" ASC");
         ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);

@@ -74,6 +74,7 @@ public sealed class DistributedLockTests
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
         var ctx     = new DatabaseContext("Data Source=fake", factory);
         var storage = new PengdowsCrudJobStorage(ctx);
+        _ = storage.Clock.UtcNow;
 
         // Seed a connection that returns 0 from ExecuteNonQueryAsync (UPSERT acquired 0 rows — lock held)
         var conn = new fakeDbConnection();
@@ -137,6 +138,7 @@ public sealed class DistributedLockTests
     public async Task RenewAsync_WhenRenewalReturnsFalse_SetsLeaseLost()
     {
         var (storage, factory) = CreateStorage();
+        _ = storage.Clock.UtcNow;
         using var lk = new PengdowsCrudDistributedLock(storage, "renew-fail", TimeSpan.FromSeconds(30));
         Assert.False(lk.LeaseLost);
 
@@ -171,6 +173,7 @@ public sealed class DistributedLockTests
     public async Task RenewAsync_WhenTryRenewThrows_DoesNotPropagate()
     {
         var (storage, factory) = CreateStorage();
+        _ = storage.Clock.UtcNow;
         using var lk = new PengdowsCrudDistributedLock(storage, "renew-throw", TimeSpan.FromSeconds(30));
 
         var conn = new fakeDbConnection();
@@ -188,6 +191,7 @@ public sealed class DistributedLockTests
     public async Task RenewAsync_WhenTransientFailurePassesConfirmedExpiry_SetsLeaseLost()
     {
         var (storage, factory) = CreateStorage();
+        _ = storage.Clock.UtcNow;
         using var lk = new PengdowsCrudDistributedLock(storage, "renew-expired", TimeSpan.FromSeconds(30));
 
         typeof(PengdowsCrudDistributedLock)
@@ -208,7 +212,8 @@ public sealed class DistributedLockTests
     public async Task RenewAsync_WhenCasAcknowledgementIsLost_AdoptsStoredVersion()
     {
         var (storage, _) = CreateStorage();
-        ReplaceLockGateway(storage, DispatchProxy.Create<IDistributedLockGateway, AmbiguousRenewGateway>());
+        var proxy = DispatchProxy.Create<IDistributedLockGateway, AmbiguousRenewGateway>();
+        ReplaceLockGateway(storage, proxy);
         using var lk = new PengdowsCrudDistributedLock(storage, "renew-ambiguous", TimeSpan.FromSeconds(30));
 
         var renewMethod = typeof(PengdowsCrudDistributedLock)
@@ -219,6 +224,10 @@ public sealed class DistributedLockTests
         Assert.Equal(2, typeof(PengdowsCrudDistributedLock)
             .GetField("_version", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(lk));
+        var expiry = (DateTime)typeof(PengdowsCrudDistributedLock)
+            .GetField("_lastConfirmedExpiry", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(lk)!;
+        Assert.InRange(expiry, AmbiguousRenewGateway.StoredExpiryValue.AddMilliseconds(-1), AmbiguousRenewGateway.StoredExpiryValue.AddMilliseconds(1));
     }
 
     private static void ReplaceLockGateway(PengdowsCrudJobStorage storage, IDistributedLockGateway gateway)
@@ -229,6 +238,8 @@ public sealed class DistributedLockTests
 
     private class AmbiguousRenewGateway : DispatchProxy
     {
+        public static DateTime StoredExpiryValue { get; } = DateTime.UtcNow.AddHours(1);
+
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
             if (method?.Name == nameof(IDistributedLockGateway.TryAcquireAsync))
@@ -236,7 +247,8 @@ public sealed class DistributedLockTests
             if (method?.Name == nameof(IDistributedLockGateway.TryRenewAsync))
                 return Task.FromResult(false);
             if (method?.Name == nameof(IDistributedLockGateway.GetOwnedVersionAsync))
-                return Task.FromResult<int?>(2);
+                return Task.FromResult<(int version, DateTime expiresAt)?>(
+                    (2, StoredExpiryValue));
             if (method?.ReturnType == typeof(Task))
                 return Task.CompletedTask;
             return null;

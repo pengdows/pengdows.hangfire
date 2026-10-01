@@ -6,7 +6,9 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class ServerGateway : TableGateway<HfServer, string>, IServerGateway
 {
-    public ServerGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+    public ServerGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
+        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
 
     public Task<int> RemoveTimedOutAsync(DateTime cutoff) => RemoveTimedOutAsync(cutoff, null);
 
@@ -28,7 +30,7 @@ public sealed class ServerGateway : TableGateway<HfServer, string>, IServerGatew
         await using var sc = ctx.CreateSqlContainer();
         sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
         sc.AppendName("LastHeartbeat").AppendEquals()
-          .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+          .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendWhere();
         sc.AppendName("Id").AppendEquals().AppendParam(sc.AddParameterWithValue("id", DbType.String, serverId));
         return await sc.ExecuteNonQueryAsync();

@@ -6,7 +6,9 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class AggregatedCounterGateway : TableGateway<AggregatedCounter, string>, IAggregatedCounterGateway
 {
-    public AggregatedCounterGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+    public AggregatedCounterGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
+        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
 
     public Task<Dictionary<string, long>> GetTimelineAsync(string[] keys) => GetTimelineAsync(keys, null);
 
@@ -62,7 +64,7 @@ public sealed class AggregatedCounterGateway : TableGateway<AggregatedCounter, s
         var ctx = context ?? Context;
         var sc = BuildBaseRetrieve("a", ctx);
         sc.AppendWhere();
-        sc.AppendName("a.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+        sc.AppendName("a.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendQuery(" ORDER BY ").AppendName("a.Key").AppendQuery(" ASC");
         ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);

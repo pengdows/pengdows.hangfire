@@ -6,7 +6,9 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
 {
-    public JobGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+    public JobGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
+        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
 
     public async Task<int> UpdateExpireAtAsync(long id, DateTime? expireAt, IDatabaseContext? context = null)
     {
@@ -69,7 +71,7 @@ public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
         var ctx = context ?? Context;
         var sc = BuildBaseRetrieve("j", ctx);
         sc.AppendWhere();
-        sc.AppendName("j.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, DateTime.UtcNow));
+        sc.AppendName("j.ExpireAt").AppendQuery(" < ").AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
         sc.AppendQuery(" ORDER BY ").AppendName("j.Id").AppendQuery(" ASC");
         ctx.Dialect.AppendPaging(sc.Query, 0, batchSize);
         var expired = await LoadListAsync(sc);

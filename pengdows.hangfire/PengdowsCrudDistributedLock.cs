@@ -17,6 +17,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
     private readonly string _ownerId;
     private readonly TimeSpan _ttl;
     private readonly TimeSpan _heartbeatInterval;
+    private readonly StorageClock _clock;
     private readonly Timer _heartbeat;
     private int _version;
     private DateTime _lastConfirmedExpiry;
@@ -32,6 +33,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
         if (resource == null) throw new ArgumentNullException(nameof(resource));
 
         _gateway           = storage.Locks;
+        _clock             = storage.Clock;
         _resource          = resource;
         _ttl               = storage.Options.DistributedLockTtl;
         _heartbeatInterval = TimeSpan.FromTicks(_ttl.Ticks / 5);
@@ -54,7 +56,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
 
         while (true)
         {
-            var now     = DateTime.UtcNow;
+            var now     = storage.Clock.UtcNow;
             var expiresAt = now + storage.Options.DistributedLockTtl;
             var claimed = await storage.Locks.TryAcquireAsync(resource, ownerId, expiresAt, now);
             if (claimed)
@@ -93,7 +95,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
     {
         try
         {
-            var newExpiresAt = DateTime.UtcNow + _ttl;
+            var newExpiresAt = _clock.UtcNow + _ttl;
             var renewed = await _gateway.TryRenewAsync(
                 _resource, _ownerId, _version, newExpiresAt);
 
@@ -102,10 +104,10 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
                 // A committed renewal can lose its acknowledgement. If the row
                 // still belongs to us, adopt its incremented CAS version.
                 var storedVersion = await _gateway.GetOwnedVersionAsync(_resource, _ownerId);
-                if (storedVersion.HasValue && storedVersion.Value != _version)
+                if (storedVersion.HasValue && storedVersion.Value.version != _version)
                 {
-                    _version = storedVersion.Value;
-                    _lastConfirmedExpiry = newExpiresAt;
+                    _version = storedVersion.Value.version;
+                    _lastConfirmedExpiry = storedVersion.Value.expiresAt;
                     _consecutiveRenewalFailures = 0;
                 }
                 else
@@ -118,7 +120,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
             {
                 _consecutiveRenewalFailures = 0;
                 _version++;
-                _lastConfirmedExpiry = DateTime.UtcNow + _ttl;
+                _lastConfirmedExpiry = newExpiresAt;
             }
         }
         catch (Exception ex)
@@ -134,7 +136,7 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
                     $"Repeated transient errors renewing lock '{_resource}' ({_consecutiveRenewalFailures} consecutive).", ex);
             }
 
-            if (DateTime.UtcNow >= _lastConfirmedExpiry)
+            if (_clock.UtcNow >= _lastConfirmedExpiry)
             {
                 MarkLeaseLost("the last confirmed lease expiry has passed");
                 return;

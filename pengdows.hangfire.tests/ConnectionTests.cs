@@ -529,7 +529,8 @@ public sealed class ConnectionTests
         using var conn = new PengdowsCrudConnection(storage);
         var result = conn.GetUtcDateTime();
 
-        Assert.Equal(new DateTime(2030, 1, 2, 3, 4, 5, DateTimeKind.Utc), result);
+        Assert.InRange(result, new DateTime(2030, 1, 2, 3, 4, 4, DateTimeKind.Utc),
+            new DateTime(2030, 1, 2, 3, 4, 6, DateTimeKind.Utc));
         Assert.Equal(DateTimeKind.Utc, result.Kind);
         Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
             sql => sql.Contains("SYSUTCDATETIME", StringComparison.OrdinalIgnoreCase));

@@ -147,7 +147,25 @@ public sealed class FetchedJobAndStorageTests
 
         storage.Initialize();
 
-        Assert.Empty(factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts));
+        Assert.DoesNotContain(factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts),
+            sql => sql.Contains("CREATE SCHEMA", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Storage_Initialize_WhenFetchTokenIsMissing_FailsBeforeProcessing()
+    {
+        var factory = new fakeDbFactory(
+            SupportedDatabase.SqlServer,
+            ConnectionFailureMode.FailOnCommand,
+            new InvalidOperationException("Invalid column name 'FetchToken'."));
+        var storage = new PengdowsCrudJobStorage(
+            new DatabaseContext("Data Source=fake", factory),
+            new PengdowsCrudStorageOptions { AutoPrepareSchema = false });
+
+        var error = Assert.Throws<InvalidOperationException>(() => storage.Initialize());
+
+        Assert.Contains("JobQueue.FetchToken", error.Message);
+        Assert.Contains("schema v11", error.Message);
     }
 
     // ── PengdowsCrudJobStorage features ──────────────────────────────────────

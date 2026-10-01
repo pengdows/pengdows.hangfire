@@ -118,6 +118,10 @@ For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema au
 
 The 2.0.6 release also corrects a pre-existing Hangfire compatibility defect in `GetJobData`: older 1.0 and 2.0.x builds returned invocation metadata without the deserialized `Job`, so server workers could dequeue jobs and then fail them as null jobs. Existing queued rows are compatible; no data migration is required.
 
+All servers sharing a 2.0.6 storage must be upgraded together. Older servers can create fetched rows without `FetchToken`; the watchdog reports that mixed-version condition so it can be removed before relying on fenced acknowledgements.
+
+Firebird storage-time support requires Firebird 4 or later because the UTC expression uses `AT TIME ZONE`. Recompile consumers when upgrading to 2.0.6: `AutoPrepareSchema` is now nullable (`null` means automatic SQL Server upgrade detection), which is source-compatible for ordinary assignments but changes the binary property signature.
+
 Distributed locks guarantee a single current row owner. The `LeaseLost` property reports when renewal can no longer confirm ownership, but the `IDisposable` lock contract cannot cancel or stop code already running in the critical section. Long-running jobs should observe `LeaseLost` where possible and remain idempotent even if a lease expires.
 
 For manual schema management, two options are provided:

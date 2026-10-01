@@ -196,11 +196,19 @@ public sealed class DistributedLockGatewayTests
     public async Task GetOwnedVersionAsync_QueriesByResourceAndOwner()
     {
         var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);
-        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Value"] = 7 } });
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object>
+            {
+                ["version"] = 7,
+                ["expires_at"] = DateTime.UtcNow.AddMinutes(1)
+            }
+        });
         await using (ctx)
         {
             var version = await new DistributedLockGateway(ctx).GetOwnedVersionAsync("res", "owner");
-            Assert.Equal(7, version);
+            Assert.Equal(7, version!.Value.version);
+            Assert.Equal(DateTimeKind.Utc, version.Value.expiresAt.Kind);
             Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
                 s => s.Contains("owner_id", StringComparison.OrdinalIgnoreCase)
                   && s.Contains("resource", StringComparison.OrdinalIgnoreCase));
