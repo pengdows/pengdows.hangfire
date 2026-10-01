@@ -106,6 +106,16 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         return await sc.ExecuteScalarRequiredAsync<int>();
     }
 
+    public async Task ValidateFetchTokenColumnAsync(IDatabaseContext? context = null)
+    {
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
+        sc.AppendQuery("SELECT ").AppendName("FetchToken").AppendQuery(" FROM ")
+          .AppendQuery(WrappedTableName).AppendQuery(" WHERE 1 = 0");
+        await using var reader = await sc.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) { }
+    }
+
     public Task<List<string>> GetDistinctQueuesAsync() => GetDistinctQueuesAsync(null);
 
     public async Task<List<string>> GetDistinctQueuesAsync(IDatabaseContext? context = null)

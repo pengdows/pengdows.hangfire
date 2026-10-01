@@ -91,10 +91,7 @@ public sealed class PengdowsCrudJobStorage : JobStorage
 
         try
         {
-            // Resolve the complete JobQueue projection so a missing FetchToken
-            // column is reported during startup rather than on the first claim.
-            JobQueues.GetPagedByQueueAsync("__pengdows_schema_probe__", 0, 1, false)
-                .GetAwaiter().GetResult();
+            JobQueues.ValidateFetchTokenColumnAsync().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
