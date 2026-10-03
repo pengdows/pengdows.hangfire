@@ -3,6 +3,7 @@ namespace pengdows.hangfire;
 using System;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using Hangfire.Logging;
 
 /// <summary>
@@ -33,10 +34,14 @@ internal sealed class StorageClock
         {
             var ticks = Stopwatch.GetTimestamp();
             var elapsed = Stopwatch.GetElapsedTime(_anchorTicks, ticks);
-            if (Volatile.Read(ref _needsInitialRefresh) != 0 || elapsed > _refresh)
+            if (Volatile.Read(ref _needsInitialRefresh) != 0)
             {
                 TryRefresh();
                 ticks = Stopwatch.GetTimestamp();
+            }
+            else if (elapsed > _refresh)
+            {
+                _ = Task.Run(TryRefresh);
             }
 
             lock (_gate)

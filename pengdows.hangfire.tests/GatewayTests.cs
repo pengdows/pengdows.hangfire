@@ -739,9 +739,78 @@ public sealed class GatewayTests
     }
 
     [Fact]
-    public async Task JobQueue_FetchNextJobAsync_RaceLost_ReturnsNull()
+    public async Task JobQueue_FetchNextJobAsync_SingleConnection_DisposesReaderBeforeClaim()
     {
         var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var configuration = new pengdows.crud.configuration.DatabaseContextConfiguration
+        {
+            ConnectionString = "Data Source=fake",
+            DbMode = DbMode.SingleConnection,
+            ModeLockTimeout = TimeSpan.FromMilliseconds(100)
+        };
+        var ctx = new DatabaseContext(configuration, factory);
+        factory.CreatedConnections[0].EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object?> { ["Id"] = 1L, ["JobId"] = 42L }
+        });
+
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Equal(42L, result!.Value.JobId);
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_SqlServer_UsesSkipLockedClaimPath()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L }
+        });
+
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
+                sql => sql.Contains("UPDLOCK", StringComparison.OrdinalIgnoreCase)
+                    && sql.Contains("READPAST", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_PostgreSql_UsesSkipLockedClaimPath()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.PostgreSql);
+        var ctx = new DatabaseContext("Data Source=fake", factory);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["Id"] = 1L, ["JobId"] = 42L }
+        });
+
+        await using (ctx)
+        {
+            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+                new[] { "default" }, CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
+                sql => sql.Contains("FOR UPDATE SKIP LOCKED", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task JobQueue_FetchNextJobAsync_RaceLost_ReturnsNull()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Sqlite);
         var ctx = new DatabaseContext("Data Source=fake", factory);
         // EnqueueReaderResult creates the SELECT connection at _connections[0].
         // Append the UPDATE connection after so the pool is [SELECT-conn, UPDATE-conn(race-lost)].
@@ -763,7 +832,7 @@ public sealed class GatewayTests
     [Fact]
     public async Task JobQueue_FetchNextJobAsync_ClaimsSecondCandidateWhenFirstRaceLost()
     {
-        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var factory = new fakeDbFactory(SupportedDatabase.Sqlite);
         var ctx = new DatabaseContext("Data Source=fake", factory);
         // SELECT streams 2 rows; first UPDATE loses the race (0 rows); second UPDATE wins (fresh conn).
         factory.EnqueueReaderResult(new[]

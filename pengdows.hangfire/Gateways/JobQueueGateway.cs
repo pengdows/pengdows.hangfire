@@ -5,11 +5,20 @@ using System.Threading;
 using System.Threading.Tasks;
 using pengdows.hangfire.models;
 using pengdows.crud;
+using pengdows.crud.enums;
 
 namespace pengdows.hangfire.gateways;
 
 public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGateway
 {
+    private enum ClaimLockMode
+    {
+        None,
+        SqlServer,
+        PostgreSql
+    }
+
+    private const int CandidateBatchSize = 32;
     private readonly Func<DateTime> _utcNow;
     public JobQueueGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
         => _utcNow = utcNow ?? (() => DateTime.UtcNow);
@@ -153,27 +162,23 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
     public async Task<(long JobId, string Queue, string FetchToken)?> FetchNextJobAsync(string[] queues, CancellationToken ct, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
+        var claimLockMode = GetClaimLockMode(ctx);
+        if (claimLockMode != ClaimLockMode.None)
+        {
+            return await FetchNextJobWithSkipLockedAsync(queues, ct, ctx, claimLockMode);
+        }
+
         foreach (var queue in queues)
         {
             ct.ThrowIfCancellationRequested();
 
-            // Stream candidates lazily — no LIMIT, no allocation into a list.
-            // The FetchedAt IS NULL guard in TryClaimAsync is the correctness gate.
-            await using var sc = ctx.CreateSqlContainer();
-            sc.AppendQuery("SELECT ")
-                .AppendName("Id").AppendComma()
-                .AppendName("JobId")
-                .AppendQuery(" FROM ").AppendQuery(WrappedTableName).AppendWhere();
-            sc.AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
-            sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NULL");
-            sc.AppendQuery(" ORDER BY ").AppendName("Id").AppendQuery(" ASC");
+            // Materialize candidates before claiming so SingleConnection contexts do not
+            // attempt an UPDATE while this reader still owns the shared connection gate.
+            var candidates = await ReadCandidatesAsync(queue, ctx, ClaimLockMode.None, ct);
 
-            await using var reader = await sc.ExecuteReaderAsync(CommandType.Text, ct);
-            while (await reader.ReadAsync(ct))
+            foreach (var (id, jobId) in candidates)
             {
                 ct.ThrowIfCancellationRequested();
-                var id    = reader.GetInt64(0);
-                var jobId = reader.GetInt64(1);
                 var fetchToken = Guid.NewGuid().ToString("N");
                 if (await TryClaimAsync(id, queue, fetchToken, ct, ctx))
                 {
@@ -183,6 +188,87 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         }
 
         return null;
+    }
+
+    private static ClaimLockMode GetClaimLockMode(IDatabaseContext context)
+    {
+        if (context.ConnectionMode == DbMode.SingleConnection)
+        {
+            return ClaimLockMode.None;
+        }
+
+        return context.Product switch
+        {
+            SupportedDatabase.SqlServer => ClaimLockMode.SqlServer,
+            SupportedDatabase.PostgreSql => ClaimLockMode.PostgreSql,
+            _ => ClaimLockMode.None
+        };
+    }
+
+    private async Task<(long JobId, string Queue, string FetchToken)?> FetchNextJobWithSkipLockedAsync(
+        string[] queues,
+        CancellationToken ct,
+        IDatabaseContext context,
+        ClaimLockMode lockMode)
+    {
+        await using var transaction = await context.BeginTransactionAsync(cancellationToken: ct);
+        foreach (var queue in queues)
+        {
+            ct.ThrowIfCancellationRequested();
+            var candidates = await ReadCandidatesAsync(queue, transaction, lockMode, ct);
+            foreach (var (id, jobId) in candidates)
+            {
+                ct.ThrowIfCancellationRequested();
+                var fetchToken = Guid.NewGuid().ToString("N");
+                if (await TryClaimAsync(id, queue, fetchToken, ct, transaction))
+                {
+                    await transaction.CommitAsync(ct);
+                    return (jobId, queue, fetchToken);
+                }
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+        return null;
+    }
+
+    private async Task<List<(long Id, long JobId)>> ReadCandidatesAsync(
+        string queue,
+        IDatabaseContext context,
+        ClaimLockMode lockMode,
+        CancellationToken ct)
+    {
+        var candidates = new List<(long Id, long JobId)>();
+        await using (var sc = context.CreateSqlContainer())
+        {
+            sc.AppendQuery("SELECT ")
+                .AppendName("Id").AppendComma()
+                .AppendName("JobId")
+                .AppendQuery(" FROM ").AppendQuery(WrappedTableName);
+            if (lockMode == ClaimLockMode.SqlServer)
+            {
+                sc.AppendQuery(" WITH (UPDLOCK, READPAST, ROWLOCK)");
+            }
+
+            sc.AppendWhere();
+            sc.AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
+            sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NULL");
+            sc.AppendQuery(" ORDER BY ").AppendName("Id").AppendQuery(" ASC");
+            if (lockMode == ClaimLockMode.PostgreSql)
+            {
+                sc.AppendQuery(" FOR UPDATE SKIP LOCKED");
+            }
+
+            context.Dialect.AppendPaging(sc.Query, 0, CandidateBatchSize);
+            await using var reader = await sc.ExecuteReaderAsync(CommandType.Text, ct);
+            while (await reader.ReadAsync(ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                candidates.Add((reader.GetInt64(0), reader.GetInt64(1)));
+            }
+        }
+
+        return candidates;
     }
 
     private async Task<bool> TryClaimAsync(long id, string queue, string fetchToken, CancellationToken ct, IDatabaseContext? context = null)

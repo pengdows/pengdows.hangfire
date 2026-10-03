@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.Threading;
 using Xunit;
 
 namespace pengdows.hangfire.tests;
@@ -36,5 +38,36 @@ public sealed class StorageClockTests
         Assert.InRange(first, databaseNow.AddSeconds(-1), databaseNow.AddSeconds(1));
         Assert.True(second >= first);
         Assert.True(second < databaseNow.AddSeconds(2));
+    }
+
+    [Fact]
+    public void UtcNow_DoesNotWaitForPeriodicDatabaseRefresh()
+    {
+        var calls = 0;
+        using var refreshStarted = new ManualResetEventSlim();
+        using var releaseRefresh = new ManualResetEventSlim();
+        var clock = new StorageClock(() =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                return DateTime.UtcNow;
+            }
+
+            refreshStarted.Set();
+            releaseRefresh.Wait(TimeSpan.FromSeconds(5));
+            return DateTime.UtcNow;
+        }, TimeSpan.Zero);
+
+        _ = clock.UtcNow;
+        _ = clock.UtcNow;
+        Assert.True(refreshStarted.Wait(TimeSpan.FromSeconds(1)));
+
+        var stopwatch = Stopwatch.StartNew();
+        _ = clock.UtcNow;
+        stopwatch.Stop();
+
+        releaseRefresh.Set();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(250),
+            $"UtcNow waited {stopwatch.Elapsed.TotalMilliseconds:F0} ms for refresh.");
     }
 }
