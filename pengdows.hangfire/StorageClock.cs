@@ -7,7 +7,9 @@ using System.Threading.Tasks;
 using Hangfire.Logging;
 
 /// <summary>
-/// A monotonic UTC clock periodically anchored to the database clock.
+/// A monotonic UTC clock periodically anchored to the database clock. After the
+/// initial database anchor, corrections are forward-only so lease timestamps
+/// never move backwards.
 /// </summary>
 internal sealed class StorageClock
 {
@@ -65,7 +67,7 @@ internal sealed class StorageClock
             lock (_gate)
             {
                 var oldAtEnd = _anchorDb + Stopwatch.GetElapsedTime(_anchorTicks, end);
-                if (midpoint < oldAtEnd)
+                if (Volatile.Read(ref _needsInitialRefresh) == 0 && midpoint < oldAtEnd)
                     midpoint = oldAtEnd;
                 _anchorDb = DateTime.SpecifyKind(midpoint, DateTimeKind.Utc);
                 _anchorTicks = end;

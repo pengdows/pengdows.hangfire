@@ -41,7 +41,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new AggregatedCounterGateway(root);
+            var gw = new AggregatedCounterGateway(root, () => DateTime.UtcNow);
             await gw.GetTimelineAsync(new[] { "k" }, over);
 
             Assert.True(SqlContains(overF, "AggregatedCounter"),  "SQL should appear in override factory");
@@ -57,7 +57,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new CounterGateway(over);
+            var gw = new CounterGateway(over, () => DateTime.UtcNow);
             // Empty reader → returns 0 without upsert; only the SELECT from Counter runs.
             await gw.AggregateAsync(10, over);
 
@@ -74,7 +74,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new HashGateway(root);
+            var gw = new HashGateway(root, () => DateTime.UtcNow);
             await gw.GetAllEntriesAsync("ctx-key", over);
 
             Assert.True(SqlContains(overF, "Hash"),  "SQL should appear in override factory");
@@ -90,7 +90,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new JobGateway(root);
+            var gw = new JobGateway(root, () => DateTime.UtcNow);
             await gw.GetPagedByStateAsync("Enqueued", 0, 10, over);
 
             Assert.True(SqlContains(overF, "StateName"),  "SQL should appear in override factory");
@@ -124,7 +124,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new JobQueueGateway(root);
+            var gw = new JobQueueGateway(root, () => DateTime.UtcNow);
             var result = await gw.FetchNextJobAsync(new[] { "default" }, CancellationToken.None, over);
 
             Assert.Null(result); // empty reader → no candidates
@@ -157,7 +157,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new ListGateway(root);
+            var gw = new ListGateway(root, () => DateTime.UtcNow);
             await gw.GetAllAsync("ctx-key", over);
 
             Assert.True(SqlContains(overF, "List"),  "SQL should appear in override factory");
@@ -173,7 +173,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new ServerGateway(root);
+            var gw = new ServerGateway(root, () => DateTime.UtcNow);
             await gw.RemoveTimedOutAsync(DateTime.UtcNow, over);
 
             Assert.True(SqlContains(overF, "LastHeartbeat"),  "DELETE must appear in override factory");
@@ -189,7 +189,7 @@ public sealed class GatewayContextRoutingTests
         var (root, rootF, over, overF) = MakePair();
         await using (root) await using (over)
         {
-            var gw = new SetGateway(root);
+            var gw = new SetGateway(root, () => DateTime.UtcNow);
             await gw.GetAllItemsAsync("ctx-key", over);
 
             Assert.True(SqlContains(overF, "Set"),  "SQL should appear in override factory");

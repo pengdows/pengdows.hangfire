@@ -70,7 +70,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetAllEntriesAsync("k");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetAllEntriesAsync("k");
             Assert.Empty(result);
         }
     }
@@ -81,7 +81,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).GetAllEntriesAsync("mykey");
+            await new HashGateway(ctx, () => DateTime.UtcNow).GetAllEntriesAsync("mykey");
             Assert.True(ReaderContains(factory, "Key"));
         }
     }
@@ -92,7 +92,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetValueAsync("k", "f");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetValueAsync("k", "f");
             Assert.Null(result);
         }
     }
@@ -103,7 +103,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).GetValueAsync("k", "f");
+            await new HashGateway(ctx, () => DateTime.UtcNow).GetValueAsync("k", "f");
             Assert.True(ReaderContains(factory, "Field"));
         }
     }
@@ -114,7 +114,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetCountAsync("k");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetCountAsync("k");
             Assert.Equal(0L, result);
         }
     }
@@ -125,7 +125,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            await new HashGateway(ctx).GetCountAsync("k");
+            await new HashGateway(ctx, () => DateTime.UtcNow).GetCountAsync("k");
             Assert.True(ReaderContains(factory, "COUNT"));
         }
     }
@@ -136,7 +136,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.Equal(TimeSpan.FromSeconds(-1), result);
         }
     }
@@ -147,7 +147,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).GetTtlAsync("k");
+            await new HashGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(ReaderContains(factory, "ExpireAt"));
             Assert.True(ReaderContains(factory, "MIN"));
         }
@@ -159,7 +159,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).DeleteAllForKeyAsync("k");
+            await new HashGateway(ctx, () => DateTime.UtcNow).DeleteAllForKeyAsync("k");
             Assert.True(NonQueryContains(factory, "DELETE"));
             Assert.True(NonQueryContains(factory, "Key"));
         }
@@ -171,7 +171,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            await new HashGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "ExpireAt"));
         }
@@ -183,7 +183,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new HashGateway(ctx).UpdateExpireAtAsync("k", null);
+            await new HashGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync("k", null);
             Assert.True(NonQueryContains(factory, "UPDATE"));
         }
     }
@@ -196,7 +196,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ListGateway(ctx).AppendAsync("k", "v");
+            await new ListGateway(ctx, () => DateTime.UtcNow).AppendAsync("k", "v");
             Assert.True(SqlContains(factory, "INSERT"));
             Assert.True(SqlContains(factory, "Value"));
         }
@@ -208,7 +208,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ListGateway(ctx).DeleteByKeyValueAsync("k", "v");
+            await new ListGateway(ctx, () => DateTime.UtcNow).DeleteByKeyValueAsync("k", "v");
             Assert.True(SqlContains(factory, "DELETE"));
             Assert.True(SqlContains(factory, "Value"));
         }
@@ -220,7 +220,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ListGateway(ctx).TrimAsync("k", 0, 5);
+            await new ListGateway(ctx, () => DateTime.UtcNow).TrimAsync("k", 0, 5);
             Assert.True(NonQueryContains(factory, "DELETE"));
             Assert.True(NonQueryContains(factory, "NOT IN"));
         }
@@ -232,7 +232,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetCountAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetCountAsync("k");
             Assert.Equal(0L, result);
         }
     }
@@ -243,7 +243,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            await new ListGateway(ctx).GetCountAsync("k");
+            await new ListGateway(ctx, () => DateTime.UtcNow).GetCountAsync("k");
             Assert.True(ReaderContains(factory, "COUNT"));
         }
     }
@@ -254,7 +254,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.Equal(TimeSpan.FromSeconds(-1), result);
         }
     }
@@ -265,7 +265,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetRangeAsync("k", 0, 9);
             Assert.Empty(result);
         }
     }
@@ -276,7 +276,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetAllAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetAllAsync("k");
             Assert.Empty(result);
         }
     }
@@ -287,7 +287,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ListGateway(ctx).GetAllAsync("mylistkey");
+            await new ListGateway(ctx, () => DateTime.UtcNow).GetAllAsync("mylistkey");
             Assert.True(ReaderContains(factory, "Key"));
         }
     }
@@ -298,7 +298,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ListGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            await new ListGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "ExpireAt"));
         }
@@ -312,7 +312,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetAllItemsAsync("k");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetAllItemsAsync("k");
             Assert.Empty(result);
         }
     }
@@ -323,7 +323,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1);
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetFirstByLowestScoreAsync("k", 0, 1);
             Assert.Null(result);
         }
     }
@@ -334,7 +334,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1, 3);
+            await new SetGateway(ctx, () => DateTime.UtcNow).GetFirstByLowestScoreAsync("k", 0, 1, 3);
             Assert.True(ReaderContains(factory, "Score"));
         }
     }
@@ -345,7 +345,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetFirstByLowestScoreAsync("k", 0, 1, 3);
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetFirstByLowestScoreAsync("k", 0, 1, 3);
             Assert.Empty(result);
         }
     }
@@ -356,7 +356,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetCountAsync("k");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetCountAsync("k");
             Assert.Equal(0L, result);
         }
     }
@@ -367,7 +367,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).ContainsAsync("k", "v");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).ContainsAsync("k", "v");
             Assert.False(result);
         }
     }
@@ -378,7 +378,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContextWithScalar(1L);
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).ContainsAsync("k", "v");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).ContainsAsync("k", "v");
             Assert.True(result);
         }
     }
@@ -389,7 +389,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContextWithScalar(0L);
         await using (ctx)
         {
-            await new SetGateway(ctx).ContainsAsync("k", "v");
+            await new SetGateway(ctx, () => DateTime.UtcNow).ContainsAsync("k", "v");
             Assert.True(ReaderContains(factory, "Value"));
         }
     }
@@ -400,7 +400,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetRangeAsync("k", 0, 4);
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetRangeAsync("k", 0, 4);
             Assert.Empty(result);
         }
     }
@@ -411,7 +411,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new SetGateway(ctx).GetRangeAsync("k", 0, 4);
+            await new SetGateway(ctx, () => DateTime.UtcNow).GetRangeAsync("k", 0, 4);
             Assert.True(ReaderContains(factory, "Score"));
         }
     }
@@ -422,7 +422,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.Equal(TimeSpan.FromSeconds(-1), result);
         }
     }
@@ -433,7 +433,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new SetGateway(ctx).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
+            await new SetGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync("k", DateTime.UtcNow.AddHours(1));
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "ExpireAt"));
         }
@@ -445,7 +445,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new SetGateway(ctx).DeleteByKeyAsync("k");
+            await new SetGateway(ctx, () => DateTime.UtcNow).DeleteByKeyAsync("k");
             Assert.True(NonQueryContains(factory, "DELETE"));
             Assert.True(NonQueryContains(factory, "Key"));
         }
@@ -459,7 +459,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobGateway(ctx).UpdateExpireAtAsync(1L, DateTime.UtcNow.AddHours(1));
+            await new JobGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync(1L, DateTime.UtcNow.AddHours(1));
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "ExpireAt"));
         }
@@ -471,7 +471,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobGateway(ctx).UpdateExpireAtAsync(1L, null);
+            await new JobGateway(ctx, () => DateTime.UtcNow).UpdateExpireAtAsync(1L, null);
             Assert.True(NonQueryContains(factory, "UPDATE"));
         }
     }
@@ -482,7 +482,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobGateway(ctx).UpdateStateNameAsync(1L, "Succeeded");
+            await new JobGateway(ctx, () => DateTime.UtcNow).UpdateStateNameAsync(1L, "Succeeded");
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "StateName"));
         }
@@ -494,7 +494,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobGateway(ctx).UpdateStateAsync(1L, 99L, "Succeeded");
+            await new JobGateway(ctx, () => DateTime.UtcNow).UpdateStateAsync(1L, 99L, "Succeeded");
             Assert.True(NonQueryContains(factory, "StateId"));
             Assert.True(NonQueryContains(factory, "StateName"));
         }
@@ -506,7 +506,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobGateway(ctx).GetPagedByStateAsync("Succeeded", 0, 10);
+            await new JobGateway(ctx, () => DateTime.UtcNow).GetPagedByStateAsync("Succeeded", 0, 10);
             Assert.True(ReaderContains(factory, "StateName"));
         }
     }
@@ -517,7 +517,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new JobGateway(ctx).GetPagedByStateAsync("Succeeded", 0, 10);
+            var result = await new JobGateway(ctx, () => DateTime.UtcNow).GetPagedByStateAsync("Succeeded", 0, 10);
             Assert.Empty(result);
         }
     }
@@ -601,7 +601,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).AcknowledgeAsync(42L, "default");
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).AcknowledgeAsync(42L, "default");
             Assert.True(NonQueryContains(factory, "DELETE"));
             Assert.True(NonQueryContains(factory, "FetchedAt"));
         }
@@ -613,7 +613,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).AcknowledgeAsync(42L, "default", "claim-token");
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).AcknowledgeAsync(42L, "default", "claim-token");
             var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
             Assert.Contains(sql, s => s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
         }
@@ -625,7 +625,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueAsync(42L, "default");
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueAsync(42L, "default");
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "NULL"));
         }
@@ -637,7 +637,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueAsync(42L, "default", "claim-token");
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueAsync(42L, "default", "claim-token");
             var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
             Assert.Contains(sql, s => s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
         }
@@ -649,7 +649,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).KeepAliveAsync(42L, "default", "claim-token");
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).KeepAliveAsync(42L, "default", "claim-token");
             var sql = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts);
             Assert.Contains(sql, s => s.Contains("FetchedAt", StringComparison.OrdinalIgnoreCase)
                                    && s.Contains("FetchToken", StringComparison.OrdinalIgnoreCase));
@@ -662,7 +662,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).GetDistinctQueuesAsync();
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).GetDistinctQueuesAsync();
             Assert.True(ReaderContains(factory, "DISTINCT"));
         }
     }
@@ -673,7 +673,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).GetDistinctQueuesAsync();
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).GetDistinctQueuesAsync();
             Assert.Empty(result);
         }
     }
@@ -684,7 +684,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).GetPagedByQueueAsync("default", 0, 10, false);
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).GetPagedByQueueAsync("default", 0, 10, false);
             Assert.True(ReaderContains(factory, "FetchedAt"));
             Assert.True(ReaderContains(factory, "Queue"));
         }
@@ -696,7 +696,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
             Assert.Null(result);
         }
@@ -711,7 +711,7 @@ public sealed class GatewayTests
             using var cts = new CancellationTokenSource();
             cts.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => new JobQueueGateway(ctx).FetchNextJobAsync(new[] { "default" }, cts.Token));
+                () => new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(new[] { "default" }, cts.Token));
         }
     }
 
@@ -727,7 +727,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            var gw = new JobQueueGateway(ctx);
+            var gw = new JobQueueGateway(ctx, () => DateTime.UtcNow);
             var result = await gw.FetchNextJobAsync(new[] { "default" }, CancellationToken.None);
             Assert.NotNull(result);
             Assert.Equal(42L, result!.Value.JobId);
@@ -756,7 +756,7 @@ public sealed class GatewayTests
 
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
 
             Assert.NotNull(result);
@@ -776,7 +776,7 @@ public sealed class GatewayTests
 
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
 
             Assert.NotNull(result);
@@ -798,7 +798,7 @@ public sealed class GatewayTests
 
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
 
             Assert.NotNull(result);
@@ -823,7 +823,7 @@ public sealed class GatewayTests
         factory.Connections.Add(updateConn);
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
             Assert.Null(result);
         }
@@ -846,7 +846,7 @@ public sealed class GatewayTests
         // UPDATE-2 connection is created fresh (empty NonQueryResults → default 1 = claim wins).
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
             Assert.NotNull(result);
             Assert.Equal(20L, result!.Value.JobId);
@@ -861,7 +861,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new CounterGateway(ctx).AppendAsync("k", 1);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AppendAsync("k", 1);
             Assert.True(SqlContains(factory, "INSERT"));
             Assert.True(SqlContains(factory, "ExpireAt"));
             var val = ParamValue(factory, "ExpireAt");
@@ -875,7 +875,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new CounterGateway(ctx).AppendAsync("k", 1, DateTime.UtcNow.AddHours(1));
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AppendAsync("k", 1, DateTime.UtcNow.AddHours(1));
             Assert.True(SqlContains(factory, "INSERT"));
             Assert.True(SqlContains(factory, "ExpireAt"));
         }
@@ -887,7 +887,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new CounterGateway(ctx).AggregateAsync(100);
+            var result = await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.Equal(0, result);
         }
     }
@@ -898,7 +898,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new CounterGateway(ctx).AggregateAsync(100);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.True(ReaderContains(factory, "Id"));
         }
     }
@@ -914,7 +914,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            await new CounterGateway(ctx).AggregateAsync(100);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.True(NonQueryContains(factory, "MERGE"));
             Assert.True(NonQueryContains(factory, "HOLDLOCK"));
             Assert.False(NonQueryContains(factory, "ON CONFLICT"));
@@ -929,7 +929,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new AggregatedCounterGateway(ctx).GetTimelineAsync(Array.Empty<string>());
+            var result = await new AggregatedCounterGateway(ctx, () => DateTime.UtcNow).GetTimelineAsync(Array.Empty<string>());
             Assert.Empty(result);
         }
     }
@@ -940,7 +940,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new AggregatedCounterGateway(ctx).GetTimelineAsync(new[] { "k1", "k2" });
+            await new AggregatedCounterGateway(ctx, () => DateTime.UtcNow).GetTimelineAsync(new[] { "k1", "k2" });
             Assert.True(ReaderContains(factory, "IN"));
             Assert.True(ReaderContains(factory, "Key"));
         }
@@ -952,7 +952,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new AggregatedCounterGateway(ctx).GetValueAsync("k");
+            var result = await new AggregatedCounterGateway(ctx, () => DateTime.UtcNow).GetValueAsync("k");
             Assert.Equal(0L, result);
         }
     }
@@ -963,7 +963,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new AggregatedCounterGateway(ctx).GetValueAsync("k");
+            await new AggregatedCounterGateway(ctx, () => DateTime.UtcNow).GetValueAsync("k");
             Assert.True(ReaderContains(factory, "Value"));
         }
     }
@@ -987,7 +987,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            await new CounterGateway(ctx).AggregateAsync(100);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.True(NonQueryContains(factory, "ON DUPLICATE KEY UPDATE"),
                 $"{db}: expected ON DUPLICATE KEY UPDATE in upsert SQL");
             Assert.False(NonQueryContains(factory, "ON CONFLICT"),
@@ -1009,7 +1009,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            await new CounterGateway(ctx).AggregateAsync(100);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.True(NonQueryContains(factory, "MERGE"),
                 "Firebird: expected MERGE in upsert SQL");
             Assert.True(NonQueryContains(factory, "RDB$DATABASE"),
@@ -1032,7 +1032,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1045,7 +1045,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetTtlAsync("k");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1062,7 +1062,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).GetValueAsync("mykey", "myfield");
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).GetValueAsync("mykey", "myfield");
             Assert.Equal("myvalue", result);
         }
     }
@@ -1075,7 +1075,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1088,7 +1088,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetTtlAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1103,7 +1103,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetRangeAsync("k", 0, 9);
             Assert.Contains("item", result);
         }
     }
@@ -1118,7 +1118,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetRangeAsync("k", 0, 9);
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetRangeAsync("k", 0, 9);
             Assert.Contains(string.Empty, result);
         }
     }
@@ -1133,7 +1133,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetAllAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetAllAsync("k");
             Assert.Contains("item", result);
         }
     }
@@ -1148,7 +1148,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).GetAllAsync("k");
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).GetAllAsync("k");
             Assert.Contains(string.Empty, result);
         }
     }
@@ -1161,7 +1161,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.UtcNow.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1174,7 +1174,7 @@ public sealed class GatewayTests
         factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["v"] = DateTime.Now.AddHours(1) } });
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).GetTtlAsync("k");
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).GetTtlAsync("k");
             Assert.True(result > TimeSpan.Zero);
         }
     }
@@ -1186,7 +1186,7 @@ public sealed class GatewayTests
         var ctx = new DatabaseContext("Data Source=fake", factory);
         await using (ctx)
         {
-            await new ListGateway(ctx).DeleteByKeyValueAsync("k", "v");
+            await new ListGateway(ctx, () => DateTime.UtcNow).DeleteByKeyValueAsync("k", "v");
             Assert.True(NonQueryContains(factory, "DBMS_LOB"));
         }
     }
@@ -1199,7 +1199,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 Array.Empty<string>(), CancellationToken.None);
             Assert.Null(result);
         }
@@ -1215,7 +1215,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            var result = await new JobQueueGateway(ctx).FetchNextJobAsync(
+            var result = await new JobQueueGateway(ctx, () => DateTime.UtcNow).FetchNextJobAsync(
                 new[] { "default" }, CancellationToken.None);
             Assert.NotNull(result);
             Assert.Equal(99L, result!.Value.JobId);
@@ -1234,7 +1234,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new HashGateway(ctx).DeleteExpiredAsync(1000);
+            var result = await new HashGateway(ctx, () => DateTime.UtcNow).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
         }
     }
@@ -1249,7 +1249,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new ListGateway(ctx).DeleteExpiredAsync(1000);
+            var result = await new ListGateway(ctx, () => DateTime.UtcNow).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
         }
     }
@@ -1264,7 +1264,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new SetGateway(ctx).DeleteExpiredAsync(1000);
+            var result = await new SetGateway(ctx, () => DateTime.UtcNow).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
         }
     }
@@ -1282,7 +1282,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new JobGateway(ctx).DeleteExpiredAsync(1000);
+            var result = await new JobGateway(ctx, () => DateTime.UtcNow).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
         }
     }
@@ -1297,7 +1297,7 @@ public sealed class GatewayTests
         }});
         await using (ctx)
         {
-            var result = await new AggregatedCounterGateway(ctx).DeleteExpiredAsync(1000);
+            var result = await new AggregatedCounterGateway(ctx, () => DateTime.UtcNow).DeleteExpiredAsync(1000);
             Assert.True(result >= 0);
         }
     }
@@ -1310,7 +1310,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new ServerGateway(ctx).UpdateHeartbeatAsync("server-1");
+            await new ServerGateway(ctx, () => DateTime.UtcNow).UpdateHeartbeatAsync("server-1");
             Assert.True(NonQueryContains(factory, "UPDATE"));
             Assert.True(NonQueryContains(factory, "LastHeartbeat"));
         }
@@ -1342,7 +1342,7 @@ public sealed class GatewayTests
         var ctx = new DatabaseContext("Data Source=fake", factory);
         await using (ctx)
         {
-            await new ListGateway(ctx).TrimAsync("k", 0, 5);
+            await new ListGateway(ctx, () => DateTime.UtcNow).TrimAsync("k", 0, 5);
             // The wrapping derived-table alias must be present; its exact name is an impl detail.
             Assert.True(NonQueryContains(factory, "SELECT") && NonQueryContains(factory, "FROM ("),
                 $"{db}: LIMIT-in-IN subquery must be wrapped in a derived table for MySQL");
@@ -1357,7 +1357,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
             Assert.True(NonQueryContains(factory, "UPDATE"));
         }
     }
@@ -1368,7 +1368,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
             Assert.True(NonQueryContains(factory, "FetchedAt"));
             Assert.True(NonQueryContains(factory, "NULL"));
             Assert.True(NonQueryContains(factory, "FetchToken"));
@@ -1381,7 +1381,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
             // WHERE must include FetchedAt IS NOT NULL so unfetched rows are untouched
             Assert.True(NonQueryContains(factory, "IS NOT NULL"));
         }
@@ -1393,7 +1393,7 @@ public sealed class GatewayTests
         var (ctx, factory) = MakeContext();
         await using (ctx)
         {
-            await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
+            await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueStaleAsync(DateTime.UtcNow.AddMinutes(-5));
             // MakeParameterName produces the placeholder for the SQL text:
             //   named providers  → includes the param name (e.g. "@cutoff", ":cutoff", "cutoff")
             //   positional providers → "?"
@@ -1413,7 +1413,7 @@ public sealed class GatewayTests
         var (ctx, _) = MakeContext();
         await using (ctx)
         {
-            var count = await new JobQueueGateway(ctx).RequeueStaleAsync(DateTime.UtcNow);
+            var count = await new JobQueueGateway(ctx, () => DateTime.UtcNow).RequeueStaleAsync(DateTime.UtcNow);
             // fakeDb returns 1 by default for non-query; just verify it returns the value
             Assert.True(count >= 0);
         }
@@ -1432,7 +1432,7 @@ public sealed class GatewayTests
         });
         await using (ctx)
         {
-            await new CounterGateway(ctx).AggregateAsync(100);
+            await new CounterGateway(ctx, () => DateTime.UtcNow).AggregateAsync(100);
             Assert.True(NonQueryContains(factory, "MERGE INTO"),
                 "Oracle: expected MERGE INTO in upsert SQL");
             Assert.True(NonQueryContains(factory, "FROM DUAL"),

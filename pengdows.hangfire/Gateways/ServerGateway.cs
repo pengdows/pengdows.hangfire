@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class ServerGateway : TableGateway<HfServer, string>, IServerGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public ServerGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public ServerGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public Task<int> RemoveTimedOutAsync(DateTime cutoff) => RemoveTimedOutAsync(cutoff, null);
 

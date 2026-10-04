@@ -398,10 +398,10 @@ public sealed class LockStressTests
     /// multiple full heartbeat + TTL cycles and gives cleanup code enough time
     /// to accumulate orphan rows if any are leaking.
     ///
-    /// Not run in standard CI.  Execute explicitly with:
+    /// Not run by default. Set PENGDOWS_RUN_LONG_RUNNING=1 and execute explicitly with:
     ///   dotnet test --filter "Category=LongRunning"
     /// </summary>
-    [Fact(Timeout = 720_000)]
+    [LongRunningFact(Timeout = 720_000)]
     [Trait("Category", "LongRunning")]
     public async Task Soak_ProductionPool_10Minutes_ZeroViolations()
     {

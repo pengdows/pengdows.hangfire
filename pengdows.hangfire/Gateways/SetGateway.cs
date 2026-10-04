@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class SetGateway : PrimaryKeyTableGateway<Set>, ISetGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public SetGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public SetGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public Task<HashSet<string>> GetAllItemsAsync(string key) => GetAllItemsAsync(key, null);
 

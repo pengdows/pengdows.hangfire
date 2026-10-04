@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS ""JobQueue"" (
     ""Id"" BIGINT PRIMARY KEY DEFAULT nextval('jobqueue_id_seq'),
     ""Queue"" TEXT NOT NULL,
     ""JobId"" BIGINT NOT NULL,
-    ""FetchedAt"" TIMESTAMP NULL
+    ""FetchedAt"" TIMESTAMP NULL,
+    ""FetchToken"" VARCHAR(64) NULL
 );
 
 CREATE TABLE IF NOT EXISTS ""Server"" (

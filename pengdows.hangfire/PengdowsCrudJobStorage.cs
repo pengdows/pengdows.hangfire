@@ -53,7 +53,7 @@ public sealed class PengdowsCrudJobStorage : JobStorage
         Hashes = new HashGateway(DatabaseContext, () => Clock.UtcNow);
         Sets = new SetGateway(DatabaseContext, () => Clock.UtcNow);
         Lists = new ListGateway(DatabaseContext, () => Clock.UtcNow);
-        Counters = new CounterGateway(DatabaseContext);
+        Counters = new CounterGateway(DatabaseContext, () => Clock.UtcNow);
         AggregatedCounters = new AggregatedCounterGateway(DatabaseContext, () => Clock.UtcNow);
     }
 

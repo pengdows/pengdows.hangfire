@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using pengdows.hangfire.models;
 using pengdows.crud;
 using pengdows.crud.enums;
+using pengdows.crud.exceptions;
 
 namespace pengdows.hangfire.gateways;
 
@@ -19,9 +20,10 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
     }
 
     private const int CandidateBatchSize = 32;
+    private const int MaxTransientClaimAttempts = 3;
     private readonly Func<DateTime> _utcNow;
-    public JobQueueGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public JobQueueGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public Task<int> AcknowledgeAsync(long jobId, string queue) => AcknowledgeAsync(jobId, queue, null, null);
 
@@ -274,16 +276,40 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
     private async Task<bool> TryClaimAsync(long id, string queue, string fetchToken, CancellationToken ct, IDatabaseContext? context = null)
     {
         var ctx = context ?? Context;
-        await using var sc = ctx.CreateSqlContainer();
-        sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
-        sc.AppendName("FetchedAt").AppendEquals()
-            .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
-        sc.AppendComma().AppendName("FetchToken").AppendEquals()
-            .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
-        sc.AppendWhere();
-        sc.AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
-        sc.AppendAnd().AppendName("Id").AppendEquals().AppendParam(sc.AddParameterWithValue("id", DbType.Int64, id));
-        sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NULL");
-        return await sc.ExecuteNonQueryAsync(CommandType.Text, ct) == 1;
+        for (var attempt = 1; attempt <= MaxTransientClaimAttempts; attempt++)
+        {
+            try
+            {
+                await using var sc = ctx.CreateSqlContainer();
+                sc.AppendQuery("UPDATE ").AppendQuery(WrappedTableName).AppendQuery(" SET ");
+                sc.AppendName("FetchedAt").AppendEquals()
+                    .AppendParam(sc.AddParameterWithValue("now", DbType.DateTime, _utcNow()));
+                sc.AppendComma().AppendName("FetchToken").AppendEquals()
+                    .AppendParam(sc.AddParameterWithValue("fetchToken", DbType.String, fetchToken));
+                sc.AppendWhere();
+                sc.AppendName("Queue").AppendEquals().AppendParam(sc.AddParameterWithValue("queue", DbType.String, queue));
+                sc.AppendAnd().AppendName("Id").AppendEquals().AppendParam(sc.AddParameterWithValue("id", DbType.Int64, id));
+                sc.AppendAnd().AppendName("FetchedAt").AppendQuery(" IS NULL");
+                return await sc.ExecuteNonQueryAsync(CommandType.Text, ct) == 1;
+            }
+            catch (DatabaseException ex) when (IsTransientClaimConflict(ctx, ex) && attempt < MaxTransientClaimAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(5 * attempt), ct);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTransientClaimConflict(IDatabaseContext context, DatabaseException exception)
+    {
+        if (exception.IsTransient == true)
+        {
+            return true;
+        }
+
+        return context.Product == SupportedDatabase.Firebird
+            && exception.Message.Contains("deadlock", StringComparison.OrdinalIgnoreCase)
+            && exception.Message.Contains("concurrent update", StringComparison.OrdinalIgnoreCase);
     }
 }

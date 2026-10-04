@@ -50,7 +50,7 @@
   -->
   <Target Name="CopyWorkerToTestOutput" AfterTargets="Build">
     <PropertyGroup>
-      <WorkerBinDir>$(MSBuildThisFileDirectory)..\pengdows.hangfire.stress.tests.worker\bin\$(Configuration)\net8.0\</WorkerBinDir>
+      <WorkerBinDir>$(MSBuildThisFileDirectory)..\pengdows.hangfire.stress.tests.worker\bin\$(Configuration)\$(TargetFramework)\</WorkerBinDir>
     </PropertyGroup>
     <ItemGroup>
       <WorkerFiles Include="$(WorkerBinDir)**\*" />

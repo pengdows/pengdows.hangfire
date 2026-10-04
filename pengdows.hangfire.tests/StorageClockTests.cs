@@ -22,6 +22,17 @@ public sealed class StorageClockTests
     }
 
     [Fact]
+    public void UtcNow_UsesDatabaseTimeWhenNodeClockIsAhead()
+    {
+        var databaseNow = DateTime.UtcNow.AddMinutes(-3);
+        var clock = new StorageClock(() => databaseNow, TimeSpan.Zero);
+
+        var actual = clock.UtcNow;
+
+        Assert.InRange(actual, databaseNow.AddSeconds(-1), databaseNow.AddSeconds(1));
+    }
+
+    [Fact]
     public void UtcNow_KeepsLastAnchorWhenDatabaseRefreshFails()
     {
         var databaseNow = DateTime.UtcNow.AddMinutes(3);

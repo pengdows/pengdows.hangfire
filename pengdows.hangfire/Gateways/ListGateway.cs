@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class ListGateway : TableGateway<List, long>, IListGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public ListGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public ListGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public async Task AppendAsync(string key, string value, IDatabaseContext? context = null)
     {

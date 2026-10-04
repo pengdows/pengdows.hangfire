@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class AggregatedCounterGateway : TableGateway<AggregatedCounter, string>, IAggregatedCounterGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public AggregatedCounterGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public AggregatedCounterGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public Task<Dictionary<string, long>> GetTimelineAsync(string[] keys) => GetTimelineAsync(keys, null);
 

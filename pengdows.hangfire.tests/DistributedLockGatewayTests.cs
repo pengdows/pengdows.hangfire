@@ -149,7 +149,7 @@ public sealed class DistributedLockGatewayTests
     }
 
     [Fact]
-    public async Task TryAcquireAsync_Oracle_UsesOracleMergeSyntax()
+    public async Task TryAcquireAsync_Oracle_RoutesToInsertFirstFallback()
     {
         var (ctx, factory) = MakeContext(SupportedDatabase.Oracle);
         await using (ctx)
@@ -161,16 +161,8 @@ public sealed class DistributedLockGatewayTests
                 DateTime.UtcNow);
 
             Assert.True(acquired);
-            var sql = factory.CreatedConnections
-                .SelectMany(c => c.ExecutedNonQueryTexts)
-                .First(s => s.Contains("MERGE INTO", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains("MERGE INTO", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("FROM DUAL", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(" WHEN MATCHED THEN UPDATE SET ", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(" WHERE t.", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(" WITH (HOLDLOCK)", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(" AS t", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(";", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.True(NonQueryContains(factory, "INSERT"));
+            Assert.False(NonQueryContains(factory, "MERGE"));
         }
     }
 
@@ -212,6 +204,23 @@ public sealed class DistributedLockGatewayTests
             Assert.Contains(factory.CreatedConnections.SelectMany(c => c.ExecutedReaderTexts),
                 s => s.Contains("owner_id", StringComparison.OrdinalIgnoreCase)
                   && s.Contains("resource", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task GetOwnedVersionAsync_ConvertsLocalExpirationToUtc()
+    {
+        var (ctx, factory) = MakeContext(SupportedDatabase.SqlServer);
+        var local = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(1).ToLocalTime(), DateTimeKind.Local);
+        factory.EnqueueReaderResult(new[]
+        {
+            new Dictionary<string, object> { ["version"] = 7, ["expires_at"] = local }
+        });
+        await using (ctx)
+        {
+            var result = await new DistributedLockGateway(ctx).GetOwnedVersionAsync("res", "owner");
+            Assert.Equal(local.ToUniversalTime(), result!.Value.expiresAt);
+            Assert.Equal(DateTimeKind.Utc, result.Value.expiresAt.Kind);
         }
     }
 

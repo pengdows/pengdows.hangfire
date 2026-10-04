@@ -8,7 +8,10 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGateway
 {
-    public CounterGateway(IDatabaseContext context) : base(context) { }
+    private readonly Func<DateTime> _utcNow;
+
+    public CounterGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public async Task AppendAsync(string key, int delta, DateTime? expireAt = null, IDatabaseContext? context = null)
     {
@@ -50,7 +53,7 @@ public sealed class CounterGateway : TableGateway<Counter, long>, ICounterGatewa
         }
 
         // Group and upsert into AggregatedCounter
-        var aggregatedTableName = new AggregatedCounterGateway(ctx).WrappedTableName;
+        var aggregatedTableName = new AggregatedCounterGateway(ctx, _utcNow).WrappedTableName;
         foreach (var (aggKey, aggValue) in rows.GroupBy(r => r.Key).Select(g => (g.Key, g.Sum(r => (long)r.Value))))
         {
             await using var upsertSc = ctx.CreateSqlContainer();

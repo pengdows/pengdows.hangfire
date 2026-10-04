@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class JobGateway : TableGateway<Job, long>, IJobGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public JobGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public JobGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public async Task<int> UpdateExpireAtAsync(long id, DateTime? expireAt, IDatabaseContext? context = null)
     {

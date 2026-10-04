@@ -7,8 +7,8 @@ namespace pengdows.hangfire.gateways;
 public sealed class HashGateway : PrimaryKeyTableGateway<Hash>, IHashGateway
 {
     private readonly Func<DateTime> _utcNow;
-    public HashGateway(IDatabaseContext context, Func<DateTime>? utcNow = null) : base(context)
-        => _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    public HashGateway(IDatabaseContext context, Func<DateTime> utcNow) : base(context)
+        => _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
 
     public Task<Dictionary<string, string>> GetAllEntriesAsync(string key) => GetAllEntriesAsync(key, null);
 
