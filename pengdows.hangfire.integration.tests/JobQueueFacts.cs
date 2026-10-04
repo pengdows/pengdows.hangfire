@@ -217,6 +217,12 @@ public class SqlServerJobQueueFacts : JobQueueFacts<SqlServerFixture>
     public SqlServerJobQueueFacts(SqlServerFixture fixture) : base(fixture) { }
 }
 
+[Collection("MySql")]
+public class MySqlJobQueueFacts : JobQueueFacts<MySqlFixture>
+{
+    public MySqlJobQueueFacts(MySqlFixture fixture) : base(fixture) { }
+}
+
 [Collection("Oracle")]
 public class OracleJobQueueFacts : JobQueueFacts<OracleFixture>
 {
