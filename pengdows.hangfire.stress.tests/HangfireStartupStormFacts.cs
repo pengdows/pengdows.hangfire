@@ -53,7 +53,10 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
         var connectionString = new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
         {
             Database = databaseName,
-            MaxPoolSize = 100
+            // Keep the client pool below PostgreSQL's connection cap. The storm
+            // is about more workers than available connections, not repeated
+            // server-side connection refusals that permanently lose workers.
+            MaxPoolSize = 25
         }.ConnectionString;
 
         await using var context = new DatabaseContext(connectionString, NpgsqlFactory.Instance);
