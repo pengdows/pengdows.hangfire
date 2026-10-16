@@ -61,8 +61,9 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
             new DatabaseContextConfiguration
             {
                 ConnectionString = connectionString,
-                MaxConcurrentReads = 22,
-                MaxConcurrentWrites = 22
+                MaxConcurrentReads = 11,
+                MaxConcurrentWrites = 11,
+                PoolAcquireTimeout = TimeSpan.FromSeconds(30)
             },
             NpgsqlFactory.Instance);
         await SchemaHelper.InstallFromResourceAsync(context, "PostgresInstall.sql");
