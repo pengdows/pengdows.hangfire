@@ -105,9 +105,9 @@ GlobalConfiguration.Configuration
 
 ## Testing Infrastructure
 
-**Unit tests** (`pengdows.hangfire.tests/`) use `pengdows.crud.fakeDb`'s in-memory mock provider — no real database required. They test SQL generation, parameter binding, and return value handling.
+**Unit tests** (`pengdows.hangfire.tests/`) use `pengdows.crud.fakeDb`'s in-memory ADO.NET provider — no real database required. They test SQL generation, parameter binding, and return value handling.
 
-**Integration tests** (`pengdows.hangfire.integration.tests/`) use `SqliteStorageFixture` — an in-memory SQLite database per test collection. `SqliteInstall.sql` contains the schema DDL variant for SQLite. These tests exercise actual SQL execution end-to-end.
+**Integration tests** (`pengdows.hangfire.integration.tests/`) use SQLite directly and Testcontainers-managed database containers for server-based providers. `SqliteInstall.sql` contains the schema DDL variant for SQLite; provider-specific fixtures exercise actual SQL execution end-to-end across the database matrix.
 
 ## Code Standards (REVIEW_POLICY.md)
 

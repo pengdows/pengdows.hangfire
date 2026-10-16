@@ -197,11 +197,13 @@ dotnet test pengdows.hangfire.slnx
 # Unit tests only (no database required — uses pengdows.crud.fakeDb)
 dotnet test pengdows.hangfire.tests/pengdows.hangfire.tests.csproj
 
-# Integration tests (uses in-memory SQLite)
+# Integration tests (SQLite plus Testcontainers-managed providers)
 dotnet test pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj
 
 # Pack for release
 dotnet pack -c Release
 ```
 
-Unit tests use `pengdows.crud.fakeDb` — an in-memory mock provider that exercises SQL generation, parameter binding, and return value handling without a real database. Integration tests use SQLite via an in-process fixture.
+Unit tests use `pengdows.crud.fakeDb` — an in-memory ADO.NET provider for exercising SQL generation, parameter binding, and return value handling without a real database. Integration tests use SQLite directly and Testcontainers-managed database containers for the server-based providers; the matrix covers the supported database implementations rather than relying on a SQLite-only fixture.
+
+The lock implementation is validated with 200 concurrent workers fighting over a single lock with zero overlap, and the startup stress suite exercises a real Hangfire worker pool against a connection-constrained PostgreSQL server.
