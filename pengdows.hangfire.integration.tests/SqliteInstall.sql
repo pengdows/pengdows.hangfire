@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS "JobQueue" (
     "Id" INTEGER PRIMARY KEY,
     "Queue" TEXT NOT NULL,
     "JobId" INTEGER NOT NULL,
-    "FetchedAt" TEXT NULL
+    "FetchedAt" TEXT NULL,
+    "FetchToken" TEXT NULL
 );
 
 CREATE INDEX IF NOT EXISTS "IX_HangFire_JobQueue_Queue" ON "JobQueue" ("Queue", "FetchedAt");

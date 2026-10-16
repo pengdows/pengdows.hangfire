@@ -86,13 +86,86 @@ public sealed class FetchedJobAndStorageTests
     }
 
     [Fact]
-    public void FetchedJob_Requeue_DoesNotSetRemoveFlag()
+    public void FetchedJob_Requeue_ImmediatelyClearsFetchedAt_AndIsIdempotent()
     {
         var (storage, factory) = CreateStorage();
         var job = new PengdowsCrudFetchedJob(storage, 1L, "q");
-        job.Requeue(); // Requeue() is currently a no-op implementation
-        job.Dispose(); // should fall through to RequeueAsync (UPDATE FetchedAt = NULL)
-        Assert.True(NonQueryContains(factory, "UPDATE"));
+        job.Requeue();
+
+        var updateCountAfterRequeue = factory.CreatedConnections
+            .SelectMany(c => c.ExecutedNonQueryTexts)
+            .Count(t => t.Contains("UPDATE", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, updateCountAfterRequeue);
+
+        job.Dispose();
+
+        var updateCountAfterDispose = factory.CreatedConnections
+            .SelectMany(c => c.ExecutedNonQueryTexts)
+            .Count(t => t.Contains("UPDATE", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, updateCountAfterDispose);
+    }
+
+    [Fact]
+    public void Storage_Initialize_WithAutoPrepareOnNonSqlServer_ThrowsClearError()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.Sqlite);
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context, new PengdowsCrudStorageOptions
+        {
+            AutoPrepareSchema = true
+        });
+
+        var error = Assert.Throws<InvalidOperationException>(() => storage.Initialize());
+
+        Assert.Contains("SQL Server", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AutoPrepareSchema", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Storage_Initialize_WithDefaultOptions_MigratesExistingSqlServerSchema()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        factory.EnqueueReaderResult(new[] { new Dictionary<string, object> { ["Value"] = 1 } });
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context);
+
+        storage.Initialize();
+
+        var executed = factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts).ToList();
+        Assert.NotEmpty(executed);
+    }
+
+    [Fact]
+    public void Storage_Initialize_WithExplicitOptOut_DoesNotInspectOrInstallSchema()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        var context = new DatabaseContext("Data Source=fake", factory);
+        var storage = new PengdowsCrudJobStorage(context, new PengdowsCrudStorageOptions
+        {
+            AutoPrepareSchema = false
+        });
+
+        storage.Initialize();
+
+        Assert.DoesNotContain(factory.CreatedConnections.SelectMany(c => c.ExecutedNonQueryTexts),
+            sql => sql.Contains("CREATE SCHEMA", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Storage_Initialize_WhenFetchTokenIsMissing_FailsBeforeProcessing()
+    {
+        var factory = new fakeDbFactory(
+            SupportedDatabase.SqlServer,
+            ConnectionFailureMode.FailOnCommand,
+            new InvalidOperationException("Invalid column name 'FetchToken'."));
+        var storage = new PengdowsCrudJobStorage(
+            new DatabaseContext("Data Source=fake", factory),
+            new PengdowsCrudStorageOptions { AutoPrepareSchema = false });
+
+        var error = Assert.Throws<InvalidOperationException>(() => storage.Initialize());
+
+        Assert.Contains("JobQueue.FetchToken", error.Message);
+        Assert.Contains("schema v11", error.Message);
     }
 
     // ── PengdowsCrudJobStorage features ──────────────────────────────────────
@@ -183,7 +256,7 @@ public sealed class FetchedJobAndStorageTests
 #pragma warning disable CS0618
         Assert.Equal("hangfire", opts.SchemaName);
 #pragma warning restore CS0618
-        Assert.True(opts.AutoPrepareSchema);
+        Assert.Null(opts.AutoPrepareSchema);
         Assert.Equal(TimeSpan.FromSeconds(5), opts.QueuePollInterval);
         Assert.Equal(TimeSpan.FromMinutes(30), opts.JobExpirationCheckInterval);
         Assert.Equal(TimeSpan.FromMinutes(5), opts.CountersAggregateInterval);

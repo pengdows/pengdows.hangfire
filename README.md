@@ -70,12 +70,12 @@ IDatabaseContext databaseContext = new DatabaseContext(
 GlobalConfiguration.Configuration
     .UsePengdowsCrudStorage(databaseContext, options =>
     {
-        options.AutoPrepareSchema = true;
+        options.AutoPrepareSchema = true; // SQL Server only
         options.QueuePollInterval = TimeSpan.FromSeconds(5);
     });
 ```
 
-`AutoPrepareSchema = true` (the default) creates all required tables on first run. Set it to `false` if you manage schema migrations yourself.
+`AutoPrepareSchema = true` creates the required SQL Server tables on first run. The default `null` value migrates an existing SQL Server schema but does not create a fresh one; set `false` to opt out completely. Install the provider-specific schema script for other databases or when managing migrations yourself.
 On schema-capable databases, `pengdows.hangfire` always uses the built-in `HangFire` schema. Custom schema names are not supported.
 
 ## Configuration
@@ -85,7 +85,7 @@ All options are set via `PengdowsCrudStorageOptions`:
 | Option                        | Default    | Description                                                         |
 |-------------------------------|------------|---------------------------------------------------------------------|
 | `SchemaName`                  | `hangfire` | Obsolete and ignored. Custom database schemas are not supported     |
-| `AutoPrepareSchema`           | `true`     | Create schema tables on initialization if they do not exist         |
+| `AutoPrepareSchema`           | `null`     | Create or migrate the SQL Server schema on initialization           |
 | `QueuePollInterval`           | 5 sec      | How long a worker waits between queue polls when idle               |
 | `QueuePollJitter`             | `true`     | Randomize poll sleep to prevent thundering-herd on idle queues      |
 | `JobExpirationCheckInterval`  | 30 min     | How often the expiration manager purges expired jobs                |
@@ -114,7 +114,15 @@ Transactions are handled by collecting `Func<IDatabaseContext, Task>` commands i
 
 ## Schema Management
 
-By default (`AutoPrepareSchema = true`) the schema is installed automatically on first use.
+For SQL Server, set `AutoPrepareSchema = true` to install the embedded schema automatically on first use. The default `null` value migrates an existing schema while leaving a fresh database untouched; set `false` to disable all schema writes. Other providers require their provider-specific install script.
+
+The 2.0.6 release also corrects a pre-existing Hangfire compatibility defect in `GetJobData`: older 1.0 and 2.0.x builds returned invocation metadata without the deserialized `Job`, so server workers could dequeue jobs and then fail them as null jobs. Existing queued rows are compatible; no data migration is required.
+
+All servers sharing a 2.0.6 storage must be upgraded together. Older servers can create fetched rows without `FetchToken`; the watchdog reports that mixed-version condition so it can be removed before relying on fenced acknowledgements.
+
+Firebird storage-time support requires Firebird 4 or later because the UTC expression uses `AT TIME ZONE`. Recompile consumers when upgrading to 2.0.6: `AutoPrepareSchema` is now nullable (`null` means automatic SQL Server upgrade detection), which is source-compatible for ordinary assignments but changes the binary property signature.
+
+Distributed locks guarantee a single current row owner. The `LeaseLost` property reports when renewal can no longer confirm ownership, but the `IDisposable` lock contract cannot cancel or stop code already running in the critical section. Long-running jobs should observe `LeaseLost` where possible and remain idempotent even if a lease expires.
 
 For manual schema management, two options are provided:
 

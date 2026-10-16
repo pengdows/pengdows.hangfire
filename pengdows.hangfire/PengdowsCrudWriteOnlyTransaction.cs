@@ -9,6 +9,7 @@ using Hangfire.Storage;
 using pengdows.hangfire.contracts;
 using pengdows.hangfire.models;
 using pengdows.crud;
+using pengdows.crud.exceptions;
 
 public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IHangfireTransaction
 {
@@ -31,19 +32,29 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
         var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
             ? pengdows.crud.enums.IsolationProfile.StrictConsistency
             : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
-        await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
-        try
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            foreach (var command in _commands)
+            await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
+            try
             {
-                await command(tx);
+                foreach (var command in _commands)
+                {
+                    await command(tx);
+                }
+                await tx.CommitAsync();
+                return;
             }
-            await tx.CommitAsync();
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
+            catch (SerializationConflictException) when (attempt < maxAttempts)
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
+            }
+            catch
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                throw;
+            }
         }
     }
 
@@ -55,7 +66,7 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
         }
 
         _commands.Add(async tx =>
-            await _storage.Jobs.UpdateExpireAtAsync(id, DateTime.UtcNow.Add(expireIn), tx));
+            await _storage.Jobs.UpdateExpireAtAsync(id, _storage.Clock.UtcNow.Add(expireIn), tx));
     }
 
     public override void PersistJob(string jobId)
@@ -84,7 +95,7 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
                 JobID     = id,
                 Name      = state.Name,
                 Reason    = state.Reason,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = _storage.Clock.UtcNow,
                 Data      = JsonHelper.Serialize(state.SerializeData())
             }, tx);
         });
@@ -104,7 +115,7 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
                 JobID     = id,
                 Name      = state.Name,
                 Reason    = state.Reason,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = _storage.Clock.UtcNow,
                 Data      = JsonHelper.Serialize(state.SerializeData())
             }, tx);
         });
@@ -127,13 +138,13 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
         => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, 1, null, tx));
 
     public override void IncrementCounter(string key, TimeSpan expireIn)
-        => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, 1, DateTime.UtcNow.Add(expireIn), tx));
+        => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, 1, _storage.Clock.UtcNow.Add(expireIn), tx));
 
     public override void DecrementCounter(string key)
         => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, -1, null, tx));
 
     public override void DecrementCounter(string key, TimeSpan expireIn)
-        => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, -1, DateTime.UtcNow.Add(expireIn), tx));
+        => _commands.Add(async tx => await _storage.Counters.AppendAsync(key, -1, _storage.Clock.UtcNow.Add(expireIn), tx));
 
     public override void AddToSet(string key, string value) => AddToSet(key, value, 0.0);
 
@@ -182,19 +193,19 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
         => _commands.Add(async tx => await _storage.Hashes.DeleteAllForKeyAsync(key, tx));
 
     public override void ExpireSet(string key, TimeSpan expireIn)
-        => _commands.Add(async tx => await _storage.Sets.UpdateExpireAtAsync(key, DateTime.UtcNow.Add(expireIn), tx));
+        => _commands.Add(async tx => await _storage.Sets.UpdateExpireAtAsync(key, _storage.Clock.UtcNow.Add(expireIn), tx));
 
     public override void PersistSet(string key)
         => _commands.Add(async tx => await _storage.Sets.UpdateExpireAtAsync(key, null, tx));
 
     public override void ExpireHash(string key, TimeSpan expireIn)
-        => _commands.Add(async tx => await _storage.Hashes.UpdateExpireAtAsync(key, DateTime.UtcNow.Add(expireIn), tx));
+        => _commands.Add(async tx => await _storage.Hashes.UpdateExpireAtAsync(key, _storage.Clock.UtcNow.Add(expireIn), tx));
 
     public override void PersistHash(string key)
         => _commands.Add(async tx => await _storage.Hashes.UpdateExpireAtAsync(key, null, tx));
 
     public override void ExpireList(string key, TimeSpan expireIn)
-        => _commands.Add(async tx => await _storage.Lists.UpdateExpireAtAsync(key, DateTime.UtcNow.Add(expireIn), tx));
+        => _commands.Add(async tx => await _storage.Lists.UpdateExpireAtAsync(key, _storage.Clock.UtcNow.Add(expireIn), tx));
 
     public override void PersistList(string key)
         => _commands.Add(async tx => await _storage.Lists.UpdateExpireAtAsync(key, null, tx));

@@ -8,7 +8,14 @@ public sealed class PengdowsCrudStorageOptions
 {
     [Obsolete("SchemaName is ignored. Custom database schemas are not supported; schema-capable databases always use the built-in HangFire schema.")]
     public string SchemaName { get; set; } = "hangfire";
-    public bool AutoPrepareSchema { get; set; } = true;
+    /// <summary>
+    /// When true, install the embedded SQL Server schema during initialization.
+    /// When false, never install or migrate the schema. When null, existing
+    /// SQL Server schemas are migrated automatically; fresh databases require
+    /// setting this to true. Other providers require their provider-specific
+    /// install script.
+    /// </summary>
+    public bool? AutoPrepareSchema { get; set; }
     public TimeSpan QueuePollInterval { get; set; } = TimeSpan.FromSeconds(5);
     public TimeSpan InvisibilityTimeout { get; set; } = TimeSpan.FromMinutes(5);
     public TimeSpan DistributedLockRetryDelay { get; set; } = TimeSpan.FromMilliseconds(100);

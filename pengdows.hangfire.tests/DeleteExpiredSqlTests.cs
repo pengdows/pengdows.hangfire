@@ -53,7 +53,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            var result = await new HashGateway(context).DeleteExpiredAsync(100);
+            var result = await new HashGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.Equal(0, result);
             Assert.False(AnyNonQueryContains(factory, "DELETE"));
         }
@@ -65,7 +65,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            var result = await new SetGateway(context).DeleteExpiredAsync(100);
+            var result = await new SetGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.Equal(0, result);
             Assert.False(AnyNonQueryContains(factory, "DELETE"));
         }
@@ -77,7 +77,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            var result = await new ListGateway(context).DeleteExpiredAsync(100);
+            var result = await new ListGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.Equal(0, result);
             Assert.False(AnyNonQueryContains(factory, "DELETE"));
         }
@@ -89,7 +89,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            var result = await new JobGateway(context).DeleteExpiredAsync(100);
+            var result = await new JobGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.Equal(0, result);
             Assert.False(AnyNonQueryContains(factory, "DELETE"));
         }
@@ -101,7 +101,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            var result = await new AggregatedCounterGateway(context).DeleteExpiredAsync(100);
+            var result = await new AggregatedCounterGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.Equal(0, result);
             Assert.False(AnyNonQueryContains(factory, "DELETE"));
         }
@@ -115,7 +115,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            await new HashGateway(context).DeleteExpiredAsync(100);
+            await new HashGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.True(AnyReaderContains(factory, "ExpireAt"));
             Assert.False(AnyReaderContains(factory, "ctid"));
             Assert.False(AnyReaderContains(factory, "DELETE TOP"));
@@ -128,7 +128,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            await new SetGateway(context).DeleteExpiredAsync(100);
+            await new SetGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.True(AnyReaderContains(factory, "ExpireAt"));
             Assert.False(AnyReaderContains(factory, "ctid"));
             Assert.False(AnyReaderContains(factory, "DELETE TOP"));
@@ -141,7 +141,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            await new ListGateway(context).DeleteExpiredAsync(100);
+            await new ListGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.True(AnyReaderContains(factory, "ExpireAt"));
             Assert.False(AnyReaderContains(factory, "DELETE TOP"));
         }
@@ -153,7 +153,7 @@ public sealed class DeleteExpiredSqlTests
         var (context, factory) = MakeContext(db);
         await using (context)
         {
-            await new JobGateway(context).DeleteExpiredAsync(100);
+            await new JobGateway(context, () => DateTime.UtcNow).DeleteExpiredAsync(100);
             Assert.True(AnyReaderContains(factory, "ExpireAt"));
             Assert.False(AnyReaderContains(factory, "DELETE TOP"));
         }

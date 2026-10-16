@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS "HangFire"."JobQueue" (
     "Id"        BIGINT DEFAULT nextval('"HangFire".jobqueue_seq') PRIMARY KEY,
     "JobId"     BIGINT NOT NULL,
     "Queue"     VARCHAR(50) NOT NULL,
-    "FetchedAt" TIMESTAMPTZ);
+    "FetchedAt" TIMESTAMPTZ,
+    "FetchToken" VARCHAR(64));
 CREATE TABLE IF NOT EXISTS "HangFire"."Server" (
     "Id"            VARCHAR(200) PRIMARY KEY,
     "Data"          TEXT,

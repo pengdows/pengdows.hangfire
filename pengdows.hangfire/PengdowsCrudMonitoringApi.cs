@@ -180,10 +180,10 @@ public sealed class PengdowsCrudMonitoringApi : IHangfireMonitor
     public long SucceededListCount()  => CountByState(SucceededState.StateName).GetAwaiter().GetResult();
     public long DeletedListCount()    => CountByState(DeletedState.StateName).GetAwaiter().GetResult();
 
-    public IDictionary<DateTime, long> SucceededByDatesCount() => GetTimeline("stats:succeeded", 7,  i => DateTime.UtcNow.Date.AddDays(-i),  d => d.ToString("yyyy-MM-dd"));
-    public IDictionary<DateTime, long> FailedByDatesCount()    => GetTimeline("stats:failed",    7,  i => DateTime.UtcNow.Date.AddDays(-i),  d => d.ToString("yyyy-MM-dd"));
-    public IDictionary<DateTime, long> HourlySucceededJobs()   => GetTimeline("stats:succeeded", 24, i => TruncateToHour(DateTime.UtcNow.AddHours(-i)), d => d.ToString("yyyy-MM-dd-HH"));
-    public IDictionary<DateTime, long> HourlyFailedJobs()      => GetTimeline("stats:failed",    24, i => TruncateToHour(DateTime.UtcNow.AddHours(-i)), d => d.ToString("yyyy-MM-dd-HH"));
+    public IDictionary<DateTime, long> SucceededByDatesCount() => GetTimeline("stats:succeeded", 7,  i => _storage.Clock.UtcNow.Date.AddDays(-i),  d => d.ToString("yyyy-MM-dd"));
+    public IDictionary<DateTime, long> FailedByDatesCount()    => GetTimeline("stats:failed",    7,  i => _storage.Clock.UtcNow.Date.AddDays(-i),  d => d.ToString("yyyy-MM-dd"));
+    public IDictionary<DateTime, long> HourlySucceededJobs()   => GetTimeline("stats:succeeded", 24, i => TruncateToHour(_storage.Clock.UtcNow.AddHours(-i)), d => d.ToString("yyyy-MM-dd-HH"));
+    public IDictionary<DateTime, long> HourlyFailedJobs()      => GetTimeline("stats:failed",    24, i => TruncateToHour(_storage.Clock.UtcNow.AddHours(-i)), d => d.ToString("yyyy-MM-dd-HH"));
 
     public JobList<ProcessingJobDto> ProcessingJobs(int from, int count)
     {

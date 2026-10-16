@@ -25,6 +25,7 @@ public sealed class PengdowsCrudJobStorage : JobStorage
 
     internal PengdowsCrudStorageOptions Options { get; }
     internal IDatabaseContext DatabaseContext { get; }
+    internal StorageClock Clock { get; }
     internal IJobGateway Jobs { get; }
     internal IJobQueueGateway JobQueues { get; }
     internal IJobStateGateway JobStates { get; }
@@ -41,18 +42,19 @@ public sealed class PengdowsCrudJobStorage : JobStorage
     {
         DatabaseContext = databaseContext ?? throw new ArgumentNullException(nameof(databaseContext));
         Options = options ?? new PengdowsCrudStorageOptions();
+        Clock = new StorageClock(() => new PengdowsCrudConnection(this).ReadDatabaseUtcNow());
 
-        Jobs = new JobGateway(DatabaseContext);
-        JobQueues = new JobQueueGateway(DatabaseContext);
+        Jobs = new JobGateway(DatabaseContext, () => Clock.UtcNow);
+        JobQueues = new JobQueueGateway(DatabaseContext, () => Clock.UtcNow);
         JobStates = new JobStateGateway(DatabaseContext);
         JobParameters = new JobParameterGateway(DatabaseContext);
-        Servers = new ServerGateway(DatabaseContext);
+        Servers = new ServerGateway(DatabaseContext, () => Clock.UtcNow);
         Locks = new DistributedLockGateway(DatabaseContext);
-        Hashes = new HashGateway(DatabaseContext);
-        Sets = new SetGateway(DatabaseContext);
-        Lists = new ListGateway(DatabaseContext);
-        Counters = new CounterGateway(DatabaseContext);
-        AggregatedCounters = new AggregatedCounterGateway(DatabaseContext);
+        Hashes = new HashGateway(DatabaseContext, () => Clock.UtcNow);
+        Sets = new SetGateway(DatabaseContext, () => Clock.UtcNow);
+        Lists = new ListGateway(DatabaseContext, () => Clock.UtcNow);
+        Counters = new CounterGateway(DatabaseContext, () => Clock.UtcNow);
+        AggregatedCounters = new AggregatedCounterGateway(DatabaseContext, () => Clock.UtcNow);
     }
 
     public override IMonitoringApi GetMonitoringApi() => new PengdowsCrudMonitoringApi(this);
@@ -70,10 +72,31 @@ public sealed class PengdowsCrudJobStorage : JobStorage
 
     public void Initialize()
     {
-        if (Options.AutoPrepareSchema)
+        var shouldInstall = Options.AutoPrepareSchema == true;
+        if (Options.AutoPrepareSchema is null && DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.SqlServer)
+        {
+            // The default is intentionally non-destructive for fresh databases,
+            // but existing SQL Server schemas still need embedded migrations.
+            using var sc = DatabaseContext.CreateSqlContainer(
+                "SELECT CASE WHEN EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES " +
+                "WHERE TABLE_SCHEMA = 'HangFire' AND TABLE_NAME = 'Schema') THEN 1 ELSE 0 END");
+            shouldInstall = sc.ExecuteScalarOrNullAsync<int?>().GetAwaiter().GetResult() == 1;
+        }
+
+        if (shouldInstall)
         {
             var installer = new PengdowsCrudSchemaInstaller(DatabaseContext);
             installer.InstallAsync().GetAwaiter().GetResult();
+        }
+
+        try
+        {
+            JobQueues.ValidateFetchTokenColumnAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "pengdows.hangfire 2.0.6 requires the JobQueue.FetchToken column; apply schema v11 / Liquibase changeset 13.", ex);
         }
     }
 }

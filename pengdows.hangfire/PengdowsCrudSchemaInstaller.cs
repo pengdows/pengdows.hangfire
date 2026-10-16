@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using pengdows.crud;
+using pengdows.crud.enums;
 
 public sealed class PengdowsCrudSchemaInstaller
 {
@@ -17,6 +18,10 @@ public sealed class PengdowsCrudSchemaInstaller
 
     public async Task InstallAsync()
     {
+        if (_db.Product != SupportedDatabase.SqlServer)
+        {
+            throw new InvalidOperationException("AutoPrepareSchema currently supports only SQL Server. Install the provider-specific Hangfire schema manually for other databases.");
+        }
         var assembly = Assembly.GetExecutingAssembly();
         await using var stream = assembly.GetManifestResourceStream(
             "pengdows.hangfire.DefaultInstall.sql")

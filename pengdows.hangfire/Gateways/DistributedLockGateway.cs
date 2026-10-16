@@ -9,6 +9,8 @@ namespace pengdows.hangfire.gateways;
 
 public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord, string>, IDistributedLockGateway
 {
+    private const int MaxTransientAcquireAttempts = 3;
+
     public DistributedLockGateway(IDatabaseContext context) : base(context)
     {
     }
@@ -17,7 +19,7 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     // Single UPSERT attempt — no retry loop.
     //
     // Dialect routing:
-    //   SupportsMerge (SQL Server, Oracle, Firebird, DuckDB 1.4+, PostgreSQL 15+):
+    //   SupportsMerge (SQL Server, DuckDB 1.4+, PostgreSQL 15+):
     //     MERGE WITH (HOLDLOCK for SQL Server) ... WHEN MATCHED AND t.expires_at <= @asOf
     //
     //   SupportsInsertOnConflict + SupportsOnConflictWhere (PostgreSQL < 15, CockroachDB):
@@ -37,6 +39,22 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
     public async Task<bool> TryAcquireAsync(
         string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext? context = null)
     {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await TryAcquireCoreAsync(resource, ownerId, expiresAt, asOf, context);
+            }
+            catch (DatabaseException ex) when (ex.IsTransient == true && attempt < MaxTransientAcquireAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(5 * attempt));
+            }
+        }
+    }
+
+    private async Task<bool> TryAcquireCoreAsync(
+        string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext? context)
+    {
         var ctx = context ?? Context;
         var dsi     = ctx.DataSourceInfo;
         var dialect = ctx.Dialect;
@@ -50,8 +68,9 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
         // the driver cannot infer DbType.String/DateTime from a bare SELECT expression.
         // Route Firebird to the INSERT-first fallback instead (same path as MySQL).
         var isFirebird = dsi.Product == pengdows.crud.enums.SupportedDatabase.Firebird;
+        var isOracle = dsi.Product == pengdows.crud.enums.SupportedDatabase.Oracle;
 
-        if (dsi.SupportsMerge && !isPostgres && !isFirebird)
+        if (dsi.SupportsMerge && !isPostgres && !isFirebird && !isOracle)
         {
             return await TryAcquireMergeAsync(resource, ownerId, expiresAt, asOf, ctx);
         }
@@ -72,7 +91,7 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
         return await TryAcquireInsertFirstAsync(resource, ownerId, expiresAt, asOf, ctx);
     }
 
-    // ── SQL Server / Oracle / Firebird / DuckDB 1.4+ / PostgreSQL 15+ — MERGE ─
+    // ── SQL Server / DuckDB 1.4+ / PostgreSQL 15+ — MERGE ─
     //
     // Dialect quirks handled here:
     //   Oracle  — target/source alias must NOT use AS keyword; USING subquery needs FROM DUAL;
@@ -294,6 +313,26 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
           .AppendParam(sc.AddParameterWithValue("lockVer", DbType.Int32, expectedVersion));
         return await sc.ExecuteNonQueryAsync() == 1;
     }
+
+    public async Task<(int version, DateTime expiresAt)?> GetOwnedVersionAsync(string resource, string ownerId, IDatabaseContext? context = null)
+    {
+        var ctx = context ?? Context;
+        await using var sc = ctx.CreateSqlContainer();
+        sc.AppendQuery("SELECT ").AppendName("version").AppendComma().AppendName("expires_at").AppendQuery(" FROM ")
+          .AppendQuery(WrappedTableName).AppendWhere();
+        sc.AppendName("resource").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("lockRes", DbType.String, resource));
+        sc.AppendAnd().AppendName("owner_id").AppendEquals()
+          .AppendParam(sc.AddParameterWithValue("ownerId", DbType.String, ownerId));
+        await using var reader = await sc.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return null;
+        var expiresAt = Convert.ToDateTime(reader.GetValue(1));
+        expiresAt = expiresAt.Kind == DateTimeKind.Local
+            ? expiresAt.ToUniversalTime()
+            : DateTime.SpecifyKind(expiresAt, DateTimeKind.Utc);
+        return (Convert.ToInt32(reader.GetValue(0)), expiresAt);
+    }
+
 
     // ── Release ───────────────────────────────────────────────────────────────
 

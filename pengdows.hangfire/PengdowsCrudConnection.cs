@@ -4,10 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Hangfire.Common;
 using Hangfire.Server;
 using Hangfire.Storage;
 using pengdows.hangfire.contracts;
 using pengdows.hangfire.models;
+using pengdows.crud.exceptions;
 using HangfireJob = Hangfire.Common.Job;
 using ModelJob = pengdows.hangfire.models.Job;
 
@@ -40,7 +42,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
                 .GetAwaiter().GetResult();
             if (result.HasValue)
             {
-                return new PengdowsCrudFetchedJob(_storage, result.Value.JobId, result.Value.Queue);
+                return new PengdowsCrudFetchedJob(_storage, result.Value.JobId, result.Value.Queue, result.Value.FetchToken);
             }
 
             var wait = _storage.Options.QueuePollJitter
@@ -65,22 +67,54 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(parameters));
         }
 
-        var hfJob = new ModelJob
+        return CreateExpiredJobAsync(job, parameters, createdAt, expireIn).GetAwaiter().GetResult();
+    }
+
+    private async Task<string> CreateExpiredJobAsync(
+        HangfireJob job,
+        IDictionary<string, string> parameters,
+        DateTime createdAt,
+        TimeSpan expireIn)
+    {
+        var isolation = _storage.DatabaseContext.Product == pengdows.crud.enums.SupportedDatabase.PostgreSql
+            ? pengdows.crud.enums.IsolationProfile.StrictConsistency
+            : pengdows.crud.enums.IsolationProfile.SafeNonBlockingReads;
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            InvocationData = JsonHelper.Serialize(InvocationData.SerializeJob(job)),
-            Arguments = JsonHelper.Serialize(job.Args),
-            CreatedAt = createdAt,
-            ExpireAt = createdAt.Add(expireIn)
-        };
+            var hfJob = new ModelJob
+            {
+                InvocationData = InvocationData.SerializeJob(job).SerializePayload(),
+                Arguments = JsonHelper.Serialize(job.Args),
+                CreatedAt = createdAt,
+                ExpireAt = createdAt.Add(expireIn)
+            };
+            await using var tx = await _storage.DatabaseContext.BeginTransactionAsync(isolation);
+            try
+            {
+                await _storage.Jobs.CreateAsync(hfJob, tx);
+                foreach (var parameter in parameters)
+                {
+                    await _storage.JobParameters.UpsertAsync(
+                        new JobParameter { JobID = hfJob.ID, Name = parameter.Key, Value = parameter.Value }, tx);
+                }
 
-        _storage.Jobs.CreateAsync(hfJob).GetAwaiter().GetResult();
+                await tx.CommitAsync();
+                return hfJob.ID.ToString();
+            }
+            catch (SerializationConflictException) when (attempt < maxAttempts)
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
+            }
+            catch
+            {
+                try { await tx.RollbackAsync(); } catch { }
+                throw;
+            }
+        }
 
-        var paramTasks = parameters
-            .Select(p => _storage.JobParameters.UpsertAsync(new JobParameter { JobID = hfJob.ID, Name = p.Key, Value = p.Value }))
-            .ToArray();
-        foreach (var pt in paramTasks) pt.AsTask().Wait();
-
-        return hfJob.ID.ToString();
+        throw new InvalidOperationException("Job creation transaction exhausted its serialization retries.");
     }
 
     public override void SetJobParameter(string jobId, string name, string value)
@@ -123,23 +157,31 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(jobId));
         }
 
-        if (!long.TryParse(jobId, out var id))
-        {
-            return null!;
-        }
+        if (!long.TryParse(jobId, out var id)) return null!;
 
         var job = _storage.Jobs.RetrieveOneAsync(id).GetAwaiter().GetResult();
-        if (job == null)
-        {
-            return null!;
-        }
+        if (job == null) return null!;
 
-        var invocationData = JsonHelper.Deserialize<InvocationData>(job.InvocationData);
+        var invocationData = InvocationData.DeserializePayload(job.InvocationData);
+        invocationData.Arguments = job.Arguments;
+        HangfireJob? deserializedJob = null;
+        JobLoadException? loadException = null;
+        try
+        {
+            deserializedJob = invocationData.DeserializeJob();
+        }
+        catch (JobLoadException ex)
+        {
+            loadException = ex;
+        }
         return new JobData
         {
+            Job = deserializedJob,
             InvocationData = invocationData,
             CreatedAt = job.CreatedAt,
-            State = job.StateName
+            State = job.StateName,
+            LoadException = loadException,
+            ParametersSnapshot = _storage.JobParameters.GetAllForJobAsync(id).GetAwaiter().GetResult()
         };
     }
 
@@ -211,7 +253,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(context));
         }
 
-        var now = DateTime.UtcNow;
+        var now = _storage.Clock.UtcNow;
         _storage.Servers.UpsertAsync(new Server
         {
             ID = serverId,
@@ -242,7 +284,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
 
     public override int RemoveTimedOutServers(TimeSpan timeOut)
     {
-        var cutoff = DateTime.UtcNow.Subtract(timeOut);
+        var cutoff = _storage.Clock.UtcNow.Subtract(timeOut);
         return _storage.Servers.RemoveTimedOutAsync(cutoff).GetAwaiter().GetResult();
     }
 
@@ -408,7 +450,34 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
         return _storage.Lists.GetAllAsync(key).GetAwaiter().GetResult();
     }
 
-    public override DateTime GetUtcDateTime() => DateTime.UtcNow;
+    public override DateTime GetUtcDateTime()
+        => _storage.Clock.UtcNow;
+
+    internal DateTime ReadDatabaseUtcNow()
+    {
+        var nowExpression = _storage.DatabaseContext.Product switch
+        {
+            pengdows.crud.enums.SupportedDatabase.SqlServer => "SYSUTCDATETIME()",
+            pengdows.crud.enums.SupportedDatabase.PostgreSql => "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
+            pengdows.crud.enums.SupportedDatabase.MySql or
+            pengdows.crud.enums.SupportedDatabase.MariaDb => "UTC_TIMESTAMP(6)",
+            pengdows.crud.enums.SupportedDatabase.Oracle => "SYS_EXTRACT_UTC(SYSTIMESTAMP)",
+            pengdows.crud.enums.SupportedDatabase.Sqlite => "STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            pengdows.crud.enums.SupportedDatabase.Firebird => "CAST(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS TIMESTAMP)",
+            _ => "CURRENT_TIMESTAMP"
+        };
+        var suffix = _storage.DatabaseContext.Product switch
+        {
+            pengdows.crud.enums.SupportedDatabase.Oracle => " FROM DUAL",
+            pengdows.crud.enums.SupportedDatabase.Firebird => " FROM RDB$DATABASE",
+            _ => string.Empty
+        };
+        using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}{suffix}");
+        var value = sc.ExecuteScalarRequiredAsync<DateTime>().GetAwaiter().GetResult();
+        return value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+    }
 
     /// <summary>
     /// Returns a wait duration sampled uniformly from [base/2, base*3/2].
