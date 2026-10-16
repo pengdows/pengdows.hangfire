@@ -34,7 +34,7 @@ jobs:
         run: dotnet nuget remove source local-crud-artifacts || true
 
       - name: Restore dependencies
-        run: dotnet restore pengdows.hangfire.slnx
+        run: dotnet restore pengdows.hangfire.slnx -p:NuGetAudit=false
 
       - name: Build solution
         run: dotnet build pengdows.hangfire.slnx --no-restore --configuration Release
