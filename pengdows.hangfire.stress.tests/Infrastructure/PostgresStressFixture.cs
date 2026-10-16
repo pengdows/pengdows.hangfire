@@ -12,7 +12,9 @@ public sealed class PostgresStressFixture : BaseStressFixture
     protected override string ConnectionString => _container.GetConnectionString();
     protected override DbProviderFactory Factory => NpgsqlFactory.Instance;
     protected override string PoolSizeKeyword => "Maximum Pool Size";
-    protected override int DefaultPoolSize => 22;
+    protected override int DefaultPoolSize => 11;
+    protected override int ConnectionPoolSize => 22;
+    protected override System.TimeSpan PoolAcquireTimeout => System.TimeSpan.FromSeconds(30);
 
     protected override async Task StartContainerAsync()
     {

@@ -18,6 +18,8 @@ public abstract class BaseStressFixture : IAsyncLifetime
     protected abstract string ConnectionString { get; }
     protected abstract DbProviderFactory Factory { get; }
     protected virtual int DefaultPoolSize => 256;
+    protected virtual int ConnectionPoolSize => DefaultPoolSize;
+    protected virtual TimeSpan PoolAcquireTimeout => TimeSpan.FromSeconds(5);
     protected virtual string PoolSizeKeyword => "Max Pool Size";
 
     public virtual async Task InitializeAsync()
@@ -50,9 +52,10 @@ public abstract class BaseStressFixture : IAsyncLifetime
         new DatabaseContext(
             new DatabaseContextConfiguration
             {
-                ConnectionString = ConnectionString + (ConnectionString.Contains("Pool Size") ? "" : $";{PoolSizeKeyword}={poolSize};"),
+                ConnectionString = ConnectionString + (ConnectionString.Contains("Pool Size") ? "" : $";{PoolSizeKeyword}={ConnectionPoolSize};"),
                 MaxConcurrentWrites = poolSize,
                 MaxConcurrentReads = poolSize,
+                PoolAcquireTimeout = PoolAcquireTimeout,
                 EnableMetrics = true,
                 MetricsOptions = new MetricsOptions { EnableApproxPercentiles = true }
             },
