@@ -72,17 +72,25 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
     private void AcknowledgeCurrentClaim()
     {
         if (_fetchToken == null)
+        {
             _storage.JobQueues.AcknowledgeAsync(_jobId, _queue).GetAwaiter().GetResult();
+        }
         else
+        {
             _storage.JobQueues.AcknowledgeAsync(_jobId, _queue, _fetchToken).GetAwaiter().GetResult();
+        }
     }
 
     private void RequeueCurrentClaim()
     {
         if (_fetchToken == null)
+        {
             _storage.JobQueues.RequeueAsync(_jobId, _queue).GetAwaiter().GetResult();
+        }
         else
+        {
             _storage.JobQueues.RequeueAsync(_jobId, _queue, _fetchToken).GetAwaiter().GetResult();
+        }
     }
 
     private async Task KeepAliveAsync()
@@ -108,8 +116,13 @@ public sealed class PengdowsCrudFetchedJob : IFetchedJob
 
         if (!_disposed)
         {
-            try { _keepAlive?.Change(_storage.Options.InvisibilityTimeout / 3, Timeout.InfiniteTimeSpan); }
-            catch (ObjectDisposedException) { }
+            try
+            {
+                _keepAlive?.Change(_storage.Options.InvisibilityTimeout / 3, Timeout.InfiniteTimeSpan);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 }

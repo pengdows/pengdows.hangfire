@@ -145,8 +145,13 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
 
         if (_disposed == 0)
         {
-            try { _heartbeat.Change(_heartbeatInterval, Timeout.InfiniteTimeSpan); }
-            catch (ObjectDisposedException) { }
+            try
+            {
+                _heartbeat.Change(_heartbeatInterval, Timeout.InfiniteTimeSpan);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 
@@ -163,8 +168,13 @@ public sealed class PengdowsCrudDistributedLock : IDisposable
             return;
         }
 
-        try { _heartbeat.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
-        catch (ObjectDisposedException) { }
+        try
+        {
+            _heartbeat.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
         _heartbeat.Dispose();
 
         try

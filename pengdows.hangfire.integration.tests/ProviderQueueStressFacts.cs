@@ -62,6 +62,7 @@ public abstract class ProviderQueueStressFacts<TFixture> where TFixture : Storag
         })));
 
         Assert.Equal(0, activeOwners);
+        Assert.True(maxOwners > 0, "No worker acquired the distributed lock.");
         Assert.True(maxOwners <= 1, $"Concurrent owners reached {maxOwners}.");
     }
 

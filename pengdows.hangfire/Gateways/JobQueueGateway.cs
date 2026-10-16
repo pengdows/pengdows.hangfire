@@ -124,7 +124,9 @@ public sealed class JobQueueGateway : TableGateway<JobQueue, long>, IJobQueueGat
         sc.AppendQuery("SELECT ").AppendName("FetchToken").AppendQuery(" FROM ")
           .AppendQuery(WrappedTableName).AppendQuery(" WHERE 1 = 0");
         await using var reader = await sc.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) { }
+        while (await reader.ReadAsync())
+        {
+        }
     }
 
     public Task<List<string>> GetDistinctQueuesAsync() => GetDistinctQueuesAsync(null);

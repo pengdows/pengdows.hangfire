@@ -46,7 +46,7 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
         {
             await admin.OpenAsync();
             await using var command = admin.CreateCommand();
-            command.CommandText = $"CREATE DATABASE {databaseName}";
+            command.CommandText = "CREATE DATABASE \"storm\"";
             await command.ExecuteNonQueryAsync();
         }
 

@@ -20,6 +20,7 @@ internal sealed class StorageClock
     private DateTime _anchorDb;
     private long _anchorTicks;
     private int _refreshing;
+    private int _refreshScheduled;
     private int _needsInitialRefresh = 1;
 
     public StorageClock(Func<DateTime> readDbUtc, TimeSpan? refresh = null)
@@ -43,7 +44,10 @@ internal sealed class StorageClock
             }
             else if (elapsed > _refresh)
             {
-                _ = Task.Run(TryRefresh);
+                if (Interlocked.CompareExchange(ref _refreshScheduled, 1, 0) == 0)
+                {
+                    _ = Task.Run(TryRefresh);
+                }
             }
 
             lock (_gate)
@@ -56,7 +60,9 @@ internal sealed class StorageClock
     private void TryRefresh()
     {
         if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
+        {
             return;
+        }
 
         try
         {
@@ -82,6 +88,7 @@ internal sealed class StorageClock
         {
             Volatile.Write(ref _needsInitialRefresh, 0);
             Volatile.Write(ref _refreshing, 0);
+            Volatile.Write(ref _refreshScheduled, 0);
         }
     }
 }

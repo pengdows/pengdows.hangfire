@@ -47,12 +47,24 @@ public sealed class PengdowsCrudWriteOnlyTransaction : JobStorageTransaction, IH
             }
             catch (SerializationConflictException) when (attempt < maxAttempts)
             {
-                try { await tx.RollbackAsync(); } catch { }
+                try
+                {
+                    await tx.RollbackAsync();
+                }
+                catch
+                {
+                }
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
             }
             catch
             {
-                try { await tx.RollbackAsync(); } catch { }
+                try
+                {
+                    await tx.RollbackAsync();
+                }
+                catch
+                {
+                }
                 throw;
             }
         }

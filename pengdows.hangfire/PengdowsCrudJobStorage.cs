@@ -96,7 +96,7 @@ public sealed class PengdowsCrudJobStorage : JobStorage
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                "pengdows.hangfire 2.0.6 requires the JobQueue.FetchToken column; apply schema v11 / Liquibase changeset 13.", ex);
+                "pengdows.hangfire 2.0.5 requires the JobQueue.FetchToken column; apply schema v11 / Liquibase changeset 13.", ex);
         }
     }
 }

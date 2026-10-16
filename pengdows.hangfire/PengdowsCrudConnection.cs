@@ -104,12 +104,24 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             }
             catch (SerializationConflictException) when (attempt < maxAttempts)
             {
-                try { await tx.RollbackAsync(); } catch { }
+                try
+                {
+                    await tx.RollbackAsync();
+                }
+                catch
+                {
+                }
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt));
             }
             catch
             {
-                try { await tx.RollbackAsync(); } catch { }
+                try
+                {
+                    await tx.RollbackAsync();
+                }
+                catch
+                {
+                }
                 throw;
             }
         }
@@ -157,10 +169,16 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             throw new ArgumentNullException(nameof(jobId));
         }
 
-        if (!long.TryParse(jobId, out var id)) return null!;
+        if (!long.TryParse(jobId, out var id))
+        {
+            return null!;
+        }
 
         var job = _storage.Jobs.RetrieveOneAsync(id).GetAwaiter().GetResult();
-        if (job == null) return null!;
+        if (job == null)
+        {
+            return null!;
+        }
 
         var invocationData = InvocationData.DeserializePayload(job.InvocationData);
         invocationData.Arguments = job.Arguments;
@@ -472,7 +490,7 @@ public sealed class PengdowsCrudConnection : JobStorageConnection, IHangfireConn
             pengdows.crud.enums.SupportedDatabase.Firebird => " FROM RDB$DATABASE",
             _ => string.Empty
         };
-        using var sc = _storage.DatabaseContext.CreateSqlContainer($"SELECT {nowExpression}{suffix}");
+        using var sc = _storage.DatabaseContext.CreateSqlContainer("SELECT " + nowExpression + suffix);
         var value = sc.ExecuteScalarRequiredAsync<DateTime>().GetAwaiter().GetResult();
         return value.Kind == DateTimeKind.Local
             ? value.ToUniversalTime()

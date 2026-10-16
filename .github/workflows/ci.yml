@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Strip local NuGet source
+        run: dotnet nuget remove source local-crud-artifacts || true
+
+      - name: Restore dependencies
+        run: dotnet restore pengdows.hangfire.slnx
+
+      - name: Build solution
+        run: dotnet build pengdows.hangfire.slnx --no-restore --configuration Release
+
+      - name: Run unit tests
+        run: |
+          dotnet test pengdows.hangfire.tests/pengdows.hangfire.tests.csproj \
+            --no-build --configuration Release \
+            --blame-hang --blame-hang-timeout 120s
+
+      - name: Run SQLite integration tests
+        run: |
+          dotnet test pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj \
+            --no-build --configuration Release \
+            --blame-hang --blame-hang-timeout 120s \
+            --filter "FullyQualifiedName~Sqlite"
+
+      - name: Run stress tests
+        run: ./run-stress-tests.sh
+
+      - name: Enforce no TransactionScope usage
+        run: |
+          set -euo pipefail
+
+          if grep -rn --include='*.cs' -E 'new\s+TransactionScope|using\s+System\.Transactions' \
+            pengdows.hangfire \
+            pengdows.hangfire.tests \
+            pengdows.hangfire.integration.tests; then
+            echo "TransactionScope usage is forbidden. Use BeginTransactionAsync()."
+            exit 1
+          fi

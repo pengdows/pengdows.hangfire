@@ -39,7 +39,10 @@ public sealed class StorageClockTests
         var calls = 0;
         var clock = new StorageClock(() =>
         {
-            if (++calls > 1) throw new InvalidOperationException("database unavailable");
+            if (++calls > 1)
+            {
+                throw new InvalidOperationException("database unavailable");
+            }
             return databaseNow;
         }, TimeSpan.Zero);
 
