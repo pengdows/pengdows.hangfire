@@ -154,6 +154,8 @@ public sealed class LockBaselineComparisonTests
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"[{label}] MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
         Assert.Equal(0, timeouts);
+        Assert.Equal(workerCount, (int)(acquired + timeouts));
+        Assert.True(acquired > 0, $"[{label}] burst produced no successful lock acquisitions");
 
         var allLatencies = latencies.OrderBy(x => x).ToList();
         _out.WriteLine($"[{label}] burst workers={workerCount}  acquired={acquired}  timeouts={timeouts}  violations={tracker.Violations}  maxConcurrent={tracker.GlobalMaxConcurrentOwners()}");
@@ -210,6 +212,7 @@ public sealed class LockBaselineComparisonTests
         Assert.Equal(0, tracker.CountIntervalOverlaps());
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"[{label}] MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
+        Assert.True(acquires > 0, $"[{label}] sustained run produced no successful lock acquisitions");
 
         var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;

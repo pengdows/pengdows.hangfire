@@ -312,6 +312,7 @@ public sealed class BoundaryPressureTests
             "SELECT COUNT(*) FROM [HangFire].[hf_lock] WHERE [resource] = @r",
             ("r", resource));
 
+        Assert.True(succeeded > 0, "No workers acquired the lock during the orphan-row test.");
         Assert.Equal(0, count);
 
         _out.WriteLine($"ConstrainedPool orphan check: succeeded={succeeded}  lockRowsRemaining={count}");

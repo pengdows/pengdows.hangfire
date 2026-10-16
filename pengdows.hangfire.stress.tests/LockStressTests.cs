@@ -107,6 +107,10 @@ public sealed class LockStressTests
 
         // Single-attempt design: workers that cannot immediately steal an expired row
         // receive DistributedLockTimeoutException immediately under burst contention.
+        // Every worker must have a classified outcome; a test where every acquire
+        // fails is not evidence that the lock works.
+        Assert.Equal(workerCount, (int)(acquired + timeouts));
+        Assert.True(acquired > 0, "The burst produced no successful lock acquisitions.");
         // Correctness invariant: zero violations among workers that did acquire.
         Assert.Equal(0, tracker.Violations);
         Assert.Equal(0, tracker.CountIntervalOverlaps());
@@ -136,7 +140,7 @@ public sealed class LockStressTests
         var prefix    = "stress-skew-" + Guid.NewGuid().ToString("N") + "-";
         var resources = Enumerable.Range(0, resourceCount).Select(i => prefix + i).ToArray();
         var tracker   = new OwnershipTracker();
-        long timeouts = 0;
+        long acquired = 0, timeouts = 0;
 
         var barrier = new Barrier(workerCount);
 
@@ -158,6 +162,7 @@ public sealed class LockStressTests
                     var tid     = Guid.NewGuid().ToString("N");
                     var entered = DateTime.UtcNow;
                     tracker.Enter(resource, tid);
+                    Interlocked.Increment(ref acquired);
 
                     Thread.Sleep(Random.Shared.Next(20, 80));
 
@@ -175,6 +180,8 @@ public sealed class LockStressTests
         await Task.Run(() => { foreach (var t in threads) t.Join(); });
 
         // Single-attempt design: workers that cannot immediately acquire throw immediately.
+        Assert.Equal(workerCount, (int)(acquired + timeouts));
+        Assert.True(acquired > 0, "The skewed run produced no successful lock acquisitions.");
         // Correctness invariant: zero violations among workers that did acquire.
         Assert.Equal(0, tracker.Violations);
         Assert.Equal(0, tracker.CountIntervalOverlaps());
@@ -309,6 +316,7 @@ public sealed class LockStressTests
         Assert.Equal(0, tracker.CountIntervalOverlaps());
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
+        Assert.True(acquires > 0, "The throughput run produced no successful lock acquisitions.");
 
         var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
@@ -379,6 +387,7 @@ public sealed class LockStressTests
         Assert.Equal(0, tracker.CountIntervalOverlaps());
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()} — mutual exclusion violated");
+        Assert.True(acquires > 0, "The sustained run produced no successful lock acquisitions.");
 
         var allLatencies = latencies.OrderBy(x => x).ToList();
         var opsPerSec    = acquires * 1000.0 / durationMs;
@@ -541,6 +550,8 @@ public sealed class LockStressTests
         Assert.Equal(0, tracker.CountIntervalOverlaps());
         Assert.True(tracker.GlobalMaxConcurrentOwners() <= 1,
             $"workers={workerCount}: MaxConcurrentOwners={tracker.GlobalMaxConcurrentOwners()}");
+        Assert.Equal(acquires, totalDbCalls);
+        Assert.True(acquires > 0, $"The fan-in run produced no successful lock acquisitions for {workerCount} workers.");
 
         var dbCallsPerSec = totalDbCalls * 1000.0 / durationMs;
         var allLatencies  = latencies.OrderBy(x => x).ToList();
