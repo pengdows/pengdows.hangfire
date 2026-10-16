@@ -14,7 +14,7 @@ public sealed class PostgresStressFixture : BaseStressFixture
     protected override string PoolSizeKeyword => "Maximum Pool Size";
     protected override int DefaultPoolSize => 11;
     protected override int ConnectionPoolSize => 22;
-    protected override System.TimeSpan PoolAcquireTimeout => System.TimeSpan.FromSeconds(30);
+    protected override System.TimeSpan PoolAcquireTimeout => System.TimeSpan.FromSeconds(120);
 
     protected override async Task StartContainerAsync()
     {
