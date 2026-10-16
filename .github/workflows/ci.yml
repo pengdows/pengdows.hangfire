@@ -45,13 +45,6 @@ jobs:
             --no-build --configuration Release \
             --blame-hang --blame-hang-timeout 120s
 
-      - name: Run SQLite integration tests
-        run: |
-          dotnet test pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj \
-            --no-build --configuration Release \
-            --blame-hang --blame-hang-timeout 120s \
-            --filter "FullyQualifiedName~Sqlite"
-
       - name: Run stress tests
         run: ./run-stress-tests.sh
 
@@ -66,3 +59,44 @@ jobs:
             echo "TransactionScope usage is forbidden. Use BeginTransactionAsync()."
             exit 1
           fi
+
+  integration-provider-matrix:
+    name: Integration - ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - Sqlite
+          - Postgres
+          - SqlServer
+          - MySql
+          - Oracle
+          - Firebird
+          - CockroachDb
+          - MariaDb
+          - DuckDb
+          - YugabyteDb
+          - TiDb
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Strip local NuGet source
+        run: dotnet nuget remove source local-crud-artifacts || true
+
+      - name: Run ${{ matrix.provider }} integration tests
+        run: |
+          dotnet test pengdows.hangfire.integration.tests/pengdows.hangfire.integration.tests.csproj \
+            --configuration Release \
+            --framework net8.0 \
+            -p:NuGetAudit=false \
+            --blame-hang --blame-hang-timeout 120s \
+            --filter "FullyQualifiedName~${{ matrix.provider }}"
