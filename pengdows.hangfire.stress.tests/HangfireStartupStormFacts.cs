@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Hangfire;
 using Npgsql;
 using pengdows.crud;
+using pengdows.crud.configuration;
 using pengdows.hangfire.stress.tests.infrastructure;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -23,7 +24,7 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _container = new PostgreSqlBuilder("postgres:16-alpine")
-            .WithCommand("-c", "max_connections=30")
+            .WithCommand("-c", "max_connections=25")
             .Build();
         await _container.StartAsync();
     }
@@ -56,7 +57,14 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
             MaxPoolSize = 100
         }.ConnectionString;
 
-        await using var context = new DatabaseContext(connectionString, NpgsqlFactory.Instance);
+        await using var context = new DatabaseContext(
+            new DatabaseContextConfiguration
+            {
+                ConnectionString = connectionString,
+                MaxConcurrentReads = 22,
+                MaxConcurrentWrites = 22
+            },
+            NpgsqlFactory.Instance);
         await SchemaHelper.InstallFromResourceAsync(context, "PostgresInstall.sql");
 
         var storage = new PengdowsCrudJobStorage(context, new PengdowsCrudStorageOptions
