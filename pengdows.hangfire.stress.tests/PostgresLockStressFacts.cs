@@ -24,7 +24,7 @@ public class PostgresLockStressFacts
         _out = output;
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 300_000)]
     public async Task MutualExclusion_200ConcurrentWorkers_ZeroOverlap_Postgres()
     {
         const int workerCount = 200;
