@@ -131,6 +131,27 @@ public sealed class DistributedLockGatewayTests
     }
 
     [Fact]
+    public async Task TryAcquireAsync_RetriesWhenProviderReportsClosedConnection()
+    {
+        var factory = new fakeDbFactory(SupportedDatabase.SqlServer);
+        await using var ctx = new DatabaseContext("Data Source=fake", factory);
+
+        var failedConnection = new fakeDbConnection();
+        failedConnection.SetNonQueryExecuteException(
+            new InvalidOperationException("BeginExecuteNonQuery requires an open and available Connection. The connection's current state is closed."));
+        factory.Connections.Insert(0, failedConnection);
+
+        var acquired = await new DistributedLockGateway(ctx).TryAcquireAsync(
+            "res",
+            "owner",
+            DateTime.UtcNow.AddMinutes(1),
+            DateTime.UtcNow);
+
+        Assert.True(acquired);
+        Assert.True(factory.CreatedConnections.Count >= 2);
+    }
+
+    [Fact]
     public async Task TryAcquireAsync_Firebird_RoutesToInsertFirstFallback()
     {
         var (ctx, factory) = MakeContext(SupportedDatabase.Firebird);

@@ -49,8 +49,16 @@ public sealed class DistributedLockGateway : TableGateway<DistributedLockRecord,
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(5 * attempt));
             }
+            catch (InvalidOperationException ex) when (IsClosedConnection(ex) && attempt < MaxTransientAcquireAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(5 * attempt));
+            }
         }
     }
+
+    private static bool IsClosedConnection(InvalidOperationException exception)
+        => exception.Message.Contains("open and available connection", StringComparison.OrdinalIgnoreCase)
+            && exception.Message.Contains("current state is closed", StringComparison.OrdinalIgnoreCase);
 
     private async Task<bool> TryAcquireCoreAsync(
         string resource, string ownerId, DateTime expiresAt, DateTime asOf, IDatabaseContext? context)
