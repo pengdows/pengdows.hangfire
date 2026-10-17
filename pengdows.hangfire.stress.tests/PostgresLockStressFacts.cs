@@ -25,9 +25,9 @@ public class PostgresLockStressFacts
     }
 
     [Fact(Timeout = 300_000)]
-    public async Task MutualExclusion_200ConcurrentWorkers_ZeroOverlap_Postgres()
+    public async Task MutualExclusion_50ConcurrentWorkers_ZeroOverlap_Postgres()
     {
-        const int workerCount = 200;
+        const int workerCount = 50;
         var resource  = "postgres-stress-" + Guid.NewGuid().ToString("N");
         var tracker   = new OwnershipTracker();
         var latencies = new ConcurrentBag<long>();

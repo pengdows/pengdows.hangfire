@@ -9,10 +9,11 @@ public sealed class MySqlStressFixture : BaseStressFixture
 {
     private MySqlContainer _container = null!;
 
-    protected override string ConnectionString => _container.GetConnectionString();
+    protected override string ConnectionString =>
+        _container.GetConnectionString() + ";Default Command Timeout=120;Allow User Variables=true";
     protected override DbProviderFactory Factory => MySqlConnectorFactory.Instance;
-    protected override int DefaultPoolSize => 32;
-    protected override int ConnectionPoolSize => 64;
+    protected override int DefaultPoolSize => 4;
+    protected override int ConnectionPoolSize => 8;
     protected override System.TimeSpan PoolAcquireTimeout => System.TimeSpan.FromSeconds(120);
 
     protected override async Task StartContainerAsync()

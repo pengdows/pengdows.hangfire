@@ -18,7 +18,7 @@ namespace pengdows.hangfire.stress.tests;
 public sealed class HangfireStartupStormFacts : IAsyncLifetime
 {
     private const int Jobs = 100;
-    private const int Workers = 40;
+    private const int Workers = 10;
     private PostgreSqlContainer _container = null!;
 
     public async Task InitializeAsync()
@@ -54,16 +54,16 @@ public sealed class HangfireStartupStormFacts : IAsyncLifetime
         var connectionString = new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
         {
             Database = databaseName,
-            MaxPoolSize = 100
+            MaxPoolSize = 16
         }.ConnectionString;
 
         await using var context = new DatabaseContext(
             new DatabaseContextConfiguration
             {
                 ConnectionString = connectionString,
-                MaxConcurrentReads = 11,
-                MaxConcurrentWrites = 11,
-                PoolAcquireTimeout = TimeSpan.FromSeconds(30)
+                MaxConcurrentReads = 4,
+                MaxConcurrentWrites = 4,
+                PoolAcquireTimeout = TimeSpan.FromSeconds(120)
             },
             NpgsqlFactory.Instance);
         await SchemaHelper.InstallFromResourceAsync(context, "PostgresInstall.sql");

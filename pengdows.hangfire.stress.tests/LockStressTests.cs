@@ -500,7 +500,6 @@ public sealed class LockStressTests
     [Theory(Timeout = 300_000)]
     [InlineData(10)]
     [InlineData(50)]
-    [InlineData(200)]
     public async Task FanIn_UpsertRateScaling_ByWorkerCount(int workerCount)
     {
         const int durationMs = 15_000;

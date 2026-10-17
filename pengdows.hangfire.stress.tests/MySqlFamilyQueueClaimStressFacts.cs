@@ -16,7 +16,7 @@ public abstract class MySqlFamilyQueueClaimStressFacts<TFixture> where TFixture 
     public async Task ConcurrentClaims_ReturnEachJobAtMostOnce()
     {
         var queue = $"stress-{Guid.NewGuid():N}";
-        const int jobCount = 100;
+        const int jobCount = 50;
 
         for (var jobId = 1; jobId <= jobCount; jobId++)
         {

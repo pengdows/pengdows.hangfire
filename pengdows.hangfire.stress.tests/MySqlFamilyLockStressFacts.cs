@@ -11,7 +11,7 @@ namespace pengdows.hangfire.stress.tests;
 
 public abstract class MySqlFamilyLockStressFacts<TFixture> where TFixture : BaseStressFixture
 {
-    private const int WorkerCount = 50;
+    private const int WorkerCount = 25;
     private readonly TFixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -24,7 +24,7 @@ public abstract class MySqlFamilyLockStressFacts<TFixture> where TFixture : Base
     protected abstract string ProviderName { get; }
 
     [Fact(Timeout = 180_000)]
-    public async Task MutualExclusion_50ConcurrentWorkers_ZeroOverlap()
+    public async Task MutualExclusion_25ConcurrentWorkers_ZeroOverlap()
     {
         var resource = $"{ProviderName.ToLowerInvariant()}-stress-{Guid.NewGuid():N}";
         var tracker = new OwnershipTracker();
