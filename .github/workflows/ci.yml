@@ -45,9 +45,6 @@ jobs:
             --no-build --configuration Release \
             --blame-hang --blame-hang-timeout 120s
 
-      - name: Run stress tests
-        run: ./run-stress-tests.sh
-
       - name: Enforce no TransactionScope usage
         run: |
           set -euo pipefail
@@ -59,6 +56,45 @@ jobs:
             echo "TransactionScope usage is forbidden. Use BeginTransactionAsync()."
             exit 1
           fi
+
+  stress-provider-matrix:
+    name: Stress - ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - postgres
+          - sqlserver
+          - mysql
+          - mariadb
+          - sqlite
+          - duckdb
+          - shared
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Strip local NuGet source
+        run: dotnet nuget remove source local-crud-artifacts || true
+
+      - name: Run ${{ matrix.provider }} stress tests
+        run: ./run-stress-tests.sh "${{ matrix.provider }}"
+
+      - name: Upload ${{ matrix.provider }} stress results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-results-${{ matrix.provider }}
+          path: TestResults/stress/${{ matrix.provider }}/
+          if-no-files-found: ignore
 
   integration-provider-matrix:
     name: Integration - ${{ matrix.provider }}
