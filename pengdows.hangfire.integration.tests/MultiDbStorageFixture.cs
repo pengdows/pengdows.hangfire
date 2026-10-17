@@ -128,6 +128,7 @@ public class PostgresFixture : StorageFixture
             .WithDatabase("hangfire")
             .WithUsername("hangfire")
             .WithPassword("password")
+            .WithCommand("-c", "max_connections=200")
             .Build();
 #pragma warning restore CS0618
         await _container.StartAsync();

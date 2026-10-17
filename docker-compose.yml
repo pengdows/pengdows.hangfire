@@ -5,6 +5,7 @@ services:
       POSTGRES_USER: hangfire
       POSTGRES_PASSWORD: password
       POSTGRES_DB: pengdows_test
+    command: ["postgres", "-c", "max_connections=200"]
     ports:
       - "5432:5432"
 
