@@ -10,7 +10,7 @@ A high-performance Hangfire storage implementation built on top of the `pengdows
 - **.NET 8.0**
 - **Hangfire.Core**: The core Hangfire library.
 - **pengdows.crud**: A SQL-first data access layer providing `TableGateway`, `SqlContainer`, and advanced dialect management.
-- **SQLite**: Primary target for integration testing (via `Microsoft.Data.Sqlite`).
+- **SQLite**: Direct integration target via `Microsoft.Data.Sqlite`; server-based providers use Testcontainers fixtures.
 
 ### Architecture
 The project follows a modular gateway-based architecture where each Hangfire storage concern is isolated into its own gateway class:
@@ -52,7 +52,7 @@ All contributions must strictly adhere to the standards defined in `REVIEW_POLIC
 ### Testing (TDD)
 - **Unit Tests**: Required for all new logic and bug fixes.
 - **Integration Tests**: Mandatory for any changes affecting database behavior, SQL generation, or transactions.
-- **SQLite Fixture**: Use `SqliteStorageFixture` for integration tests to ensure a clean, isolated database environment for each test collection.
+- **Integration fixtures**: Use the provider-specific fixtures in `pengdows.hangfire.integration.tests`; SQLite runs directly and server-based providers run in Testcontainers-managed containers.
 
 ### Resource Management (Lampson Rule)
 - Ownership of `DbConnection` and `IDataReader` must be explicit.
